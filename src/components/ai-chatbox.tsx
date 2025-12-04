@@ -4,7 +4,17 @@ import type React from "react";
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Bot, Send, Sparkles, User, Copy, Loader2, Wand2 } from "lucide-react";
+import {
+  Bot,
+  Send,
+  Sparkles,
+  User,
+  Copy,
+  Loader2,
+  Wand2,
+  ChevronsUpDown,
+  Check,
+} from "lucide-react";
 import {
   DEFAULT_MODEL,
   getChatResponse,
@@ -15,6 +25,9 @@ import {
 } from "../lib/api";
 import ReactMarkdown from "react-markdown";
 import { Typewriter } from "@/components/typewriter";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandGroup, CommandItem } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 
 type Message = {
   role: "ai" | "user";
@@ -215,40 +228,96 @@ export function AiChatButton() {
               <div className="flex items-center gap-2">
                 <Bot size={24} className="text-blue-600 dark:text-blue-400" />
                 <h2 className="font-bold text-xl tracking-tight bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
-                  Prompt Hub AI
+                  Prompt Hash AI
                 </h2>
               </div>
-              <select
-                title="Select AI model"
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value as AIModel)}
-                className="text-sm border rounded-md py-1 px-2 bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                disabled={isModelLoading || !modelOptions.length}
-              >
-                {isModelLoading && !modelOptions.length ? (
-                  <option value="">Loading models...</option>
-                ) : (
-                  <>
-                    {Object.entries(modelCategories || {}).map(
-                      ([category, options]) => (
-                        <optgroup key={category} label={category}>
-                          {options.map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.displayName} ({option.id})
-                            </option>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="h-10 min-w-[200px] justify-between border-gray-300 bg-white/80 text-sm font-semibold text-gray-800 hover:border-blue-500 hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-500 dark:bg-gray-800 dark:text-gray-100 dark:border-gray-700"
+                    disabled={isModelLoading || !modelOptions.length}
+                  >
+                    <span className="truncate text-left">
+                      {isModelLoading
+                        ? "Loading models..."
+                        : modelOptions.find((m) => m.id === selectedModel)?.displayName ||
+                          selectedModel}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 opacity-60" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-72 p-0" align="end">
+                  <Command>
+                    <CommandGroup heading="Models">
+                      {Object.keys(modelCategories).length
+                        ? Object.entries(modelCategories).map(
+                            ([category, options]) => (
+                              <div key={category} className="border-b last:border-0">
+                                <div className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-gray-500">
+                                  {category}
+                                </div>
+                                {options.map((option) => (
+                                  <CommandItem
+                                    key={option.id}
+                                    value={option.id}
+                                    onSelect={() =>
+                                      setSelectedModel(option.id as AIModel)
+                                    }
+                                    className="flex items-start gap-2 py-2"
+                                  >
+                                    <Check
+                                      className={cn(
+                                        "h-4 w-4 mt-0.5",
+                                        selectedModel === option.id
+                                          ? "opacity-100 text-blue-600"
+                                          : "opacity-0",
+                                      )}
+                                    />
+                                    <div className="flex flex-col">
+                                      <span className="text-sm font-medium">
+                                        {option.displayName}
+                                      </span>
+                                      <span className="text-[11px] text-gray-500">
+                                        {option.id}
+                                      </span>
+                                    </div>
+                                  </CommandItem>
+                                ))}
+                              </div>
+                            ),
+                          )
+                        : modelOptions.map((option) => (
+                            <CommandItem
+                              key={option.id}
+                              value={option.id}
+                              onSelect={() =>
+                                setSelectedModel(option.id as AIModel)
+                              }
+                              className="flex items-start gap-2 py-2"
+                            >
+                              <Check
+                                className={cn(
+                                  "h-4 w-4 mt-0.5",
+                                  selectedModel === option.id
+                                    ? "opacity-100 text-blue-600"
+                                    : "opacity-0",
+                                )}
+                              />
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium">
+                                  {option.displayName}
+                                </span>
+                                <span className="text-[11px] text-gray-500">
+                                  {option.id}
+                                </span>
+                              </div>
+                            </CommandItem>
                           ))}
-                        </optgroup>
-                      ),
-                    )}
-                    {!Object.keys(modelCategories || {}).length &&
-                      modelOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.displayName} ({option.id})
-                        </option>
-                      ))}
-                  </>
-                )}
-              </select>
+                    </CommandGroup>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
             <p className="text-sm text-gray-600 dark:text-gray-300">
               {modelHint ||
