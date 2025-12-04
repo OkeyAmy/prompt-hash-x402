@@ -44,7 +44,6 @@
     "@radix-ui/react-tooltip": "^1.1.6",
     "@starknet-react/chains": "^4.0.0",
     "@starknet-react/core": "^4.0.0",
-    "@types/react": "latest",
     "@types/react-dom": "latest",
     "ai": "^4.1.61",
     "autoprefixer": "^10.4.20",
@@ -80,11 +79,11 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/node": "^22",
-    "@types/react": "^18",
+    "@types/node": "22.19.1",
+    "@types/react": "18.3.27",
     "@types/react-dom": "^18",
     "postcss": "^8",
     "tailwindcss": "^3.4.17",
-    "typescript": "^5"
+    "typescript": "5.9.3"
   }
 }
