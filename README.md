@@ -61,6 +61,36 @@ uvicorn prompthash_asi.main:app --reload --host 0.0.0.0 --port 8000
 Point `NEXT_PUBLIC_API_URL` at `http://127.0.0.1:8000` if you want the frontend to hit your local instance.
 
 ---
+## Architecture For ASI API
+
+High-level layout of the `prompthash-api` folder:
+
+- `prompthash-api/` – project root for this service
+  - `requirements.txt` – Python dependencies
+  - `FASTAPI_USAGE.md` – quick integration and API usage guide
+  - `frontend_app.py` – legacy Flask proxy app for the original uAgents-based agents
+  - `templates/asi_chat.html` – single-page HTML UI for chat + prompt improver
+  - `prompthash_api/` – FastAPI package
+    - `main.py` – FastAPI app factory and router wiring
+    - `routers/` – endpoint definitions:
+      - `chat.py` – chat API routes
+      - `improver.py` – prompt improver routes
+      - `models.py` – model listing routes
+      - `pages.py` – HTML page routes (serves `/` and static UI)
+    - `services/` – business logic/services:
+      - `chat_service.py` – chat orchestration and history handling
+      - `prompt_improver_service.py` – prompt improvement logic
+      - `model_list_service.py` – ASI model listing and categorization
+    - `schemas/` – Pydantic models for request/response bodies:
+      - `chat.py`, `improver.py`, `models.py`
+    - `core/`:
+      - `config.py` – configuration and environment variable loading
+      - `state.py` – in-memory state helpers (counters, history)
+    - `clients/asi_client.py` – ASI/uAgents client wrapper used by services
+
+At runtime, the FastAPI app is constructed in `prompthash_asi.main.create_app()` and exposed as a module-level `app` suitable for ASGI servers like `uvicorn` or `gunicorn`.
+
+---
 
 ## Deploy or update the PromptHash contract on BNB
 
