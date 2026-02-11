@@ -20,7 +20,7 @@ export default function FaqSection() {
     {
       question: "What payment methods do you accept?",
       answer:
-        "We accept various payment methods including credit/debit cards, PayPal, and cryptocurrency (BNB, ETH, and BTC). All transactions are secure and encrypted.",
+        "PromptHash payments are handled with x402 on Stacks using STX and sBTC. Payment challenges are cryptographically verifiable and settled through a facilitator.",
     },
     {
       question: "How does the hackathon work?",

@@ -1,130 +1,88 @@
-## PromptHash (BNB + ASI AI)
+## PromptHash (Stacks + x402 + Supabase)
 
-![PromptHash Dashboard](image/landing-page.png)
+PromptHash is a Stacks-native prompt marketplace built on Next.js. Sellers list prompts in Supabase, buyers browse listed metadata publicly, and premium prompt content is gated behind x402 payment challenges (STX / sBTC).
 
-PromptHash is a BNB Chain prompt marketplace powered by ASI AI for chat, prompt improvement, and live model discovery. The frontend runs on Next.js/Tailwind, the marketplace logic lives in a Solidity contract on BNB, and the AI rails are provided by the FastAPI service in `asi-ai` (also hosted at `https://prompthash-asi.onrender.com`).
+## Stack
 
----
+- Frontend: Next.js (App Router) + React + Tailwind
+- Wallet: `@stacks/connect` (Leather / Xverse compatible)
+- Data store: Supabase (Postgres + RLS)
+- Payments: `x402-stacks` with facilitator settlement
 
-## What's inside
+## Environment
 
-- **Frontend (`src/`)**: Next.js + Tailwind UI for browsing, buying, and selling prompts with wallet auth.
-- **BNB smart contract (`contracts/`)**: Solidity contract plus ABI/bin/metadata artifacts for prompt listing and settlement.
-- **ASI FastAPI service (`asi-ai/`)**: REST API for chat, prompt improver, and model catalog with an HTML UI at `/`.
+Copy `.env.example` to `.env.local` and fill values.
 
----
+```bash
+cp .env.example .env.local
+```
 
-## Quick start (frontend using hosted services)
+Required vars:
 
-1) Install dependencies:
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `NETWORK` (`testnet` or `mainnet`)
+- `FACILITATOR_URL`
+- `SERVER_ADDRESS`
+- `SERVER_PRIVATE_KEY` (server-side only)
+
+## Supabase migration
+
+Apply SQL migration:
+
+- `supabase/migrations/20260210_marketplace.sql`
+
+This creates:
+
+- `prompts` table
+- `purchases` table
+- required indexes
+- RLS and column grants so public can only read listed prompt metadata (not `paid_content`)
+
+## Run
 
 ```bash
 npm install
-```
-
-2) Create `.env.local`:
-
-```ini
-NEXT_PUBLIC_API_URL=https://prompthash-asi.onrender.com   # or http://127.0.0.1:8000 if running FastAPI locally
-NEXT_PUBLIC_DEPLOYMENT_ADDRESS=0xYourPromptHashContract   # BNB testnet or mainnet address
-NEXT_PUBLIC_THIRDWEB_CLIENT_ID=your_thirdweb_client_id
-```
-
-3) Run the app:
-
-```bash
 npm run dev
 ```
 
-Open `http://localhost:3000` and connect a BNB-compatible wallet (for buying or listing prompts).
+App URL: `http://localhost:3000`
 
----
+## API routes
 
-## Run the ASI FastAPI service locally (optional)
+- `GET /api/prompts`
+  - Public browse metadata only:
+  - `id,title,description,image_url,category,price_base_units,currency,seller_wallet,is_listed`
 
-The FastAPI backend in `asi-ai/prompthash_api` mirrors the hosted service and exposes `/api/chat`, `/api/improve`, `/api/models`, plus a simple UI at `/`.
+- `POST /api/prompts`
+  - Create listing (seller wallet required in header + payload)
 
-```bash
-cd asi-ai
-python -m venv .venv
-.venv\Scripts\Activate.ps1   # Windows (use source .venv/bin/activate on macOS/Linux)
-pip install -r requirements.txt
-set ASICLOUD_API_KEY=your_asi_key
-uvicorn prompthash_asi.main:app --reload --host 0.0.0.0 --port 8000
-```
+- `PATCH /api/prompts/:id`
+  - Update listing (seller-only)
 
-- Required env: `ASICLOUD_API_KEY`
-- Optional env: `ASICLOUD_BASE_URL`, `PROMPT_AGENT_MODEL`, `PROMPT_IMPROVER_MODEL`, `ASI_AGENT_API`, `ASI_IMPROVER_API`, `ASI_MODELS_API`
-- UI and docs: `http://127.0.0.1:8000/` (HTML), `/docs` (Swagger), `/redoc` (ReDoc)
-- Key endpoints: `POST /api/chat`, `POST /api/improve`, `GET /api/models`, `GET /api/health`, `GET /api/improver/health`, `GET /api/models/health`
+- `GET /api/prompts/:id/content`
+  - x402-protected premium content route
+  - Unpaid: returns `402` + `payment-required` header
+  - Paid retry: accepts `payment-signature`, settles via facilitator, returns premium content and writes purchase row
 
-Point `NEXT_PUBLIC_API_URL` at `http://127.0.0.1:8000` if you want the frontend to hit your local instance.
+## Wallet behavior
 
----
-## Architecture For ASI API
+Client wallet layer is implemented with `@stacks/connect` APIs:
 
-High-level layout of the `prompthash-api` folder:
+- `connect()`
+- `isConnected()`
+- `disconnect()`
+- `request()`
 
-- `prompthash-api/` – project root for this service
-  - `requirements.txt` – Python dependencies
-  - `FASTAPI_USAGE.md` – quick integration and API usage guide
-  - `frontend_app.py` – legacy Flask proxy app for the original uAgents-based agents
-  - `templates/asi_chat.html` – single-page HTML UI for chat + prompt improver
-  - `prompthash_api/` – FastAPI package
-    - `main.py` – FastAPI app factory and router wiring
-    - `routers/` – endpoint definitions:
-      - `chat.py` – chat API routes
-      - `improver.py` – prompt improver routes
-      - `models.py` – model listing routes
-      - `pages.py` – HTML page routes (serves `/` and static UI)
-    - `services/` – business logic/services:
-      - `chat_service.py` – chat orchestration and history handling
-      - `prompt_improver_service.py` – prompt improvement logic
-      - `model_list_service.py` – ASI model listing and categorization
-    - `schemas/` – Pydantic models for request/response bodies:
-      - `chat.py`, `improver.py`, `models.py`
-    - `core/`:
-      - `config.py` – configuration and environment variable loading
-      - `state.py` – in-memory state helpers (counters, history)
-    - `clients/asi_client.py` – ASI/uAgents client wrapper used by services
+## Security notes
 
-At runtime, the FastAPI app is constructed in `prompthash_asi.main.create_app()` and exposed as a module-level `app` suitable for ASGI servers like `uvicorn` or `gunicorn`.
+- `SUPABASE_SERVICE_ROLE_KEY`, `SERVER_PRIVATE_KEY`, and `CLIENT_PRIVATE_KEY` are never exposed to browser bundles.
+- Use wallet-based signing for real users.
+- `CLIENT_PRIVATE_KEY` is for local automation only.
 
----
+## Removed legacy stack
 
-## Deploy or update the PromptHash contract on BNB
-
-- Contract source: `contracts/PromptHash.sol`
-  - `create` requires `PROMPT_CREATION_FEE` (0.0002 BNB by default) and auto-lists the prompt.
-  - `buy` transfers the listed price to the seller and moves ownership.
-  - `updateSaleStatus` (owner-only) toggles `onSale` and sets price (pass price in whole BNB; it is stored in wei).
-  - `likePrompt`, `getUserPrompts`, `getAllPrompts`, and `withdraw` (owner fee collection) round out the marketplace flow.
-- Artifacts for integration: `PromptHashAbi.json`, `PromptHash.abi`, `PromptHash.bin`, `PromptHash_metadata.json`
-- Deployment script: `contracts/deployScript.js` (ethers). Configure env vars, then deploy:
-
-```bash
-set RPC_URL=https://bsc-testnet.bnbchain.org    # or a mainnet RPC
-set OPERATOR_ACCOUNT_PRIVATE_KEY=0xYourEvmKey   # deployer key
-node contracts/deployScript.js
-```
-
-After deployment, set `NEXT_PUBLIC_DEPLOYMENT_ADDRESS` in `.env.local` so the frontend points to the right contract.
-
----
-
-## Project layout
-
-```
-prompt-hash-BNB/
-├─ src/                  # Next.js frontend (pages, components, lib)
-├─ contracts/            # Solidity contract and ABI/bin/metadata + deploy script
-└─ asi-ai/               # FastAPI service for chat, prompt improver, models
-```
-
----
-
-## Notes for BNB usage
-
-- Use a BNB-compatible wallet (e.g., MetaMask) on the same network as your deployed contract.
-- Prices are stored in wei; the UI expects BNB denominations when listing.
-- The default AI backend is the hosted ASI service. Switch to your local FastAPI instance by changing `NEXT_PUBLIC_API_URL`.
+- Legacy EVM wallet SDK removed
+- MongoDB removed
+- Legacy EVM contract flow removed

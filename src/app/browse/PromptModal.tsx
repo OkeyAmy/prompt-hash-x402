@@ -1,153 +1,259 @@
+"use client";
+
+import { useMemo, useState } from "react";
 import Image from "next/image";
-import { Prompt } from "./FetchAllPrompts";
+import { ShoppingCart, Wallet } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { ShoppingCart, StarIcon } from "lucide-react";
-import { shortenAddress, USDtoBNB } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  ERC20ABI,
-  PROMPT_HASH_BNB_ADDRESS,
-  PROMPT_HASH_EVM_ABI,
-} from "@/lib/constants";
-import { useMemo } from "react";
-import { toast } from "sonner";
-import { getContract, prepareContractCall, toWei } from "thirdweb";
-import { client } from "@/components/thirdwebClient";
-import { bscTestnet } from "thirdweb/chains";
-import { useActiveAccount, useSendTransaction } from "thirdweb/react";
-import { formatEther } from "ethers";
+import { shortenAddress } from "@/lib/utils";
+import { formatBaseUnits, type PromptMetadata } from "@/lib/marketplace";
+import { useStacksWallet } from "@/components/stacks-wallet-provider";
 
-export const PromptModal = ({
-  selectedPrompt,
-  closeModal,
-  handleImageError,
-}: {
-  selectedPrompt: Prompt;
+type PaymentRequiredV2 = {
+  x402Version: 2;
+  resource?: {
+    url?: string;
+    description?: string;
+    mimeType?: string;
+  };
+  accepts: Array<{
+    scheme: string;
+    network: string;
+    amount: string;
+    asset: string;
+    payTo: string;
+    maxTimeoutSeconds: number;
+  }>;
+};
+
+type PromptModalProps = {
+  selectedPrompt: PromptMetadata;
   closeModal: () => void;
-  handleImageError: (e: any) => void;
-}) => {
-  const contract = getContract({
-    client: client,
-    chain: bscTestnet,
-    address: PROMPT_HASH_BNB_ADDRESS,
-    abi: PROMPT_HASH_EVM_ABI,
-  });
+};
 
-  const activeAccount = useActiveAccount();
+function extractSignedTransaction(payload: unknown): string | null {
+  const value = payload as Record<string, any>;
+  if (!value) return null;
+  return (
+    value.transaction ||
+    value.txHex ||
+    value.tx ||
+    value.signedTx ||
+    value.signedTransaction ||
+    value.result?.transaction ||
+    value.result?.txHex ||
+    null
+  );
+}
 
-  const price = formatEther(selectedPrompt?.price!);
-  const USDValue = USDtoBNB(Number(price), "USD");
+async function createWalletPaymentPayload(
+  paymentRequired: PaymentRequiredV2,
+  requestWallet: (
+    method: string,
+    params?: Record<string, unknown>,
+  ) => Promise<unknown>,
+) {
+  const accepted = paymentRequired.accepts[0];
+  if (!accepted) throw new Error("No acceptable payment option provided");
 
-  const {
-    mutateAsync: buyPrompt,
-    data: result,
-    isPending,
-    isSuccess,
-  } = useSendTransaction();
+  const attempts: Array<{ method: string; params: Record<string, unknown> }> = [
+    {
+      method: "x402_signTransaction",
+      params: {
+        paymentRequirement: accepted,
+        resource: paymentRequired.resource,
+      },
+    },
+    {
+      method: "stx_signTransaction",
+      params: {
+        paymentRequirement: accepted,
+        resource: paymentRequired.resource,
+      },
+    },
+    {
+      method: "signTransaction",
+      params: {
+        paymentRequirement: accepted,
+        resource: paymentRequired.resource,
+      },
+    },
+  ];
 
-  const transaction = useMemo(() => {
-    if (!selectedPrompt || !activeAccount?.address) return;
+  for (const attempt of attempts) {
+    try {
+      const response = await requestWallet(attempt.method, attempt.params);
+      const transaction = extractSignedTransaction(response);
+      if (transaction) {
+        return {
+          x402Version: 2 as const,
+          resource: paymentRequired.resource,
+          accepted,
+          payload: { transaction },
+        };
+      }
+    } catch {
+      // Try next method.
+    }
+  }
 
-    const call = prepareContractCall({
-      contract,
-      method: "buy",
-      params: [BigInt(selectedPrompt.id)],
-      value: toWei(price), // 0.0002 BNB
-    });
+  throw new Error(
+    "Your wallet did not return a signed x402 transaction. Try a wallet/provider that supports x402 signing.",
+  );
+}
 
-    return call;
-  }, []);
+export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
+  const { address, connected, connectWallet, requestWallet } = useStacksWallet();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [unlockedContent, setUnlockedContent] = useState<string | null>(null);
 
-  const handleBuyPrompt = async () => {
-    if (!transaction) return;
+  const displayPrice = useMemo(
+    () =>
+      `${formatBaseUnits(selectedPrompt.price_base_units, selectedPrompt.currency)} ${
+        selectedPrompt.currency
+      }`,
+    [selectedPrompt.currency, selectedPrompt.price_base_units],
+  );
+
+  const fetchPaidContent = async () => {
+    setLoading(true);
+    setError(null);
 
     try {
-      const txHash = await buyPrompt(transaction);
-      console.log("Transaction successfully sent: ", txHash);
-    } catch (err) {
-      console.error(err);
-    }
+      if (!connected || !address) {
+        await connectWallet();
+      }
 
-    closeModal();
-    toast.success("Prompt purchase successful");
+      const firstAttempt = await fetch(
+        `/api/prompts/${selectedPrompt.id}/content`,
+        {
+          method: "GET",
+          headers: address ? { "x-buyer-wallet": address } : {},
+        },
+      );
+
+      if (firstAttempt.ok) {
+        const data = (await firstAttempt.json()) as { content: string };
+        setUnlockedContent(data.content);
+        return;
+      }
+
+      if (firstAttempt.status !== 402) {
+        const message = await firstAttempt.text();
+        throw new Error(message || "Failed to unlock prompt");
+      }
+
+      const header = firstAttempt.headers.get("payment-required");
+      const body = (await firstAttempt.json()) as PaymentRequiredV2;
+      let paymentRequired: PaymentRequiredV2 | null = body;
+
+      if (header) {
+        try {
+          paymentRequired = JSON.parse(atob(header)) as PaymentRequiredV2;
+        } catch {
+          paymentRequired = body;
+        }
+      }
+
+      if (!paymentRequired?.accepts?.length) {
+        throw new Error("Invalid payment requirement payload");
+      }
+
+      const paymentPayload = await createWalletPaymentPayload(
+        paymentRequired,
+        requestWallet,
+      );
+
+      const secondAttempt = await fetch(
+        `/api/prompts/${selectedPrompt.id}/content`,
+        {
+          method: "GET",
+          headers: {
+            "x-buyer-wallet": address || "",
+            "payment-signature": btoa(JSON.stringify(paymentPayload)),
+          },
+        },
+      );
+
+      if (!secondAttempt.ok) {
+        const message = await secondAttempt.text();
+        throw new Error(message || "Payment not accepted");
+      }
+
+      const data = (await secondAttempt.json()) as { content: string };
+      setUnlockedContent(data.content);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to unlock content");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-background rounded-lg shadow-lg max-w-xl w-full max-h-[90vh] overflow-auto">
-        <div className="p-6">
-          <div className="flex justify-between items-start mb-4">
-            <h2 className="text-2xl font-bold">{selectedPrompt?.title}</h2>
+        <div className="p-6 space-y-4">
+          <div className="flex justify-between items-start">
+            <h2 className="text-2xl font-bold">{selectedPrompt.title}</h2>
             <button
               onClick={closeModal}
               className="text-muted-foreground hover:text-foreground"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
+              <span className="sr-only">Close</span>✕
             </button>
           </div>
 
-          <div className="aspect-video mb-4 rounded-lg overflow-hidden">
+          <div className="aspect-video rounded-lg overflow-hidden relative">
             <Image
-              src={selectedPrompt?.imageUrl || "/images/codeguru.png"}
-              alt={selectedPrompt?.title || `prompt ${selectedPrompt?.id}`}
-              width={800}
-              height={450}
-              onError={handleImageError}
-              className="w-full h-full object-cover"
+              src={selectedPrompt.image_url || "/images/codeguru.png"}
+              alt={selectedPrompt.title}
+              fill
+              className="object-cover"
             />
           </div>
 
-          <div className="flex items-center justify-between mb-4">
-            <Badge>{selectedPrompt?.category}</Badge>
-            <div className="flex items-center gap-1 text-yellow-500">
-              <StarIcon className="h-4 w-4 fill-current" />
-              <span>{selectedPrompt?.likes}</span>
-            </div>
+          <div className="flex items-center justify-between">
+            <Badge>{selectedPrompt.category}</Badge>
+            <span className="text-sm text-muted-foreground">
+              Seller: {shortenAddress(selectedPrompt.seller_wallet)}
+            </span>
           </div>
 
-          <div className="mb-4">
+          <div>
             <h3 className="text-lg font-semibold mb-2">Description</h3>
-            <p className="text-muted-foreground">
-              {selectedPrompt?.description}
-            </p>
+            <p className="text-muted-foreground">{selectedPrompt.description}</p>
           </div>
 
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold mb-2">Seller</h3>
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
-                {selectedPrompt?.owner.slice(0, 2)}
+          {unlockedContent ? (
+            <div>
+              <h3 className="text-lg font-semibold mb-2">Premium Content</h3>
+              <div className="rounded-md border p-3 whitespace-pre-wrap text-sm">
+                {unlockedContent}
               </div>
-              <span className="font-mono">
-                {shortenAddress(selectedPrompt?.owner!)}
-              </span>
             </div>
-          </div>
+          ) : null}
 
           <div className="flex justify-between items-center">
-            <span className="text-2xl font-bold">
-              {USDValue.toFixed(2)} USD
-            </span>
-            <Button onClick={handleBuyPrompt}>
-              <ShoppingCart className="mr-2 h-4 w-4" />
-              Buy Now
+            <span className="text-2xl font-bold">{displayPrice}</span>
+            <Button onClick={() => void fetchPaidContent()} disabled={loading}>
+              {loading ? (
+                <>
+                  <Wallet className="mr-2 h-4 w-4 animate-pulse" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <ShoppingCart className="mr-2 h-4 w-4" />
+                  Unlock with x402
+                </>
+              )}
             </Button>
           </div>
+
+          {error ? <p className="text-sm text-red-500">{error}</p> : null}
         </div>
       </div>
     </div>
   );
-};
+}
