@@ -121,15 +121,20 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
     setError(null);
 
     try {
-      if (!connected || !address) {
-        await connectWallet();
+      let walletAddress = address;
+      if (!connected || !walletAddress) {
+        walletAddress = await connectWallet();
+      }
+
+      if (!walletAddress) {
+        throw new Error("Connect a Stacks wallet to continue.");
       }
 
       const firstAttempt = await fetch(
         `/api/prompts/${selectedPrompt.id}/content`,
         {
           method: "GET",
-          headers: address ? { "x-buyer-wallet": address } : {},
+          headers: { "x-buyer-wallet": walletAddress },
         },
       );
 
@@ -170,7 +175,7 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
         {
           method: "GET",
           headers: {
-            "x-buyer-wallet": address || "",
+            "x-buyer-wallet": walletAddress,
             "payment-signature": btoa(JSON.stringify(paymentPayload)),
           },
         },

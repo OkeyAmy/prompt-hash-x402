@@ -55,10 +55,12 @@ export function CreatePromptForm() {
     setError(null);
     setSuccess(null);
 
-    if (!connected || !address) {
-      await connectWallet();
+    let walletAddress = address;
+    if (!connected || !walletAddress) {
+      walletAddress = await connectWallet();
     }
-    if (!address) {
+
+    if (!walletAddress) {
       setError("Connect a Stacks wallet to list a prompt.");
       return;
     }
@@ -84,7 +86,7 @@ export function CreatePromptForm() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-wallet-address": address,
+          "x-wallet-address": walletAddress,
         },
         body: JSON.stringify({
           title: formData.title,
@@ -94,7 +96,7 @@ export function CreatePromptForm() {
           image_url: formData.imageUrl || null,
           price_base_units: baseUnits,
           currency: normalizeCurrency(formData.currency),
-          seller_wallet: address,
+          seller_wallet: walletAddress,
           is_listed: true,
         }),
       });

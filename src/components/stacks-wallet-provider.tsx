@@ -9,47 +9,118 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { connect, disconnect, isConnected, request } from "@stacks/connect";
+import {
+  connect,
+  disconnect,
+  getLocalStorage,
+  isConnected,
+  request,
+} from "@stacks/connect";
 
 type StacksWalletContextValue = {
   address: string | null;
   connected: boolean;
   connecting: boolean;
-  connectWallet: () => Promise<void>;
+  connectWallet: () => Promise<string | null>;
   disconnectWallet: () => Promise<void>;
   requestWallet: (
     method: string,
     params?: Record<string, unknown>,
   ) => Promise<unknown>;
-  refreshWallet: () => Promise<void>;
+  refreshWallet: () => Promise<string | null>;
 };
 
 const StacksWalletContext = createContext<StacksWalletContextValue | null>(null);
 
-const providers = (
+const providerAliasMap: Record<string, string> = {
+  leather: "LeatherProvider",
+  leatherprovider: "LeatherProvider",
+  xverse: "XverseProviders.BitcoinProvider",
+  xverseprovider: "XverseProviders.BitcoinProvider",
+  "xverseproviders.bitcoinprovider": "XverseProviders.BitcoinProvider",
+  asigna: "AsignaProvider",
+  asignaprovider: "AsignaProvider",
+  walletconnect: "WalletConnectProvider",
+  walletconnectprovider: "WalletConnectProvider",
+};
+
+function normalizeProviderId(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return providerAliasMap[trimmed.toLowerCase()] ?? trimmed;
+}
+
+const approvedProviders = Array.from(
+  new Set(
+    (
   process.env.NEXT_PUBLIC_STACKS_WALLET_PROVIDERS || "LeatherProvider,xverse"
 )
-  .split(",")
-  .map((value) => value.trim())
-  .filter(Boolean);
+      .split(",")
+      .map(normalizeProviderId)
+      .filter(Boolean),
+  ),
+);
+
+const walletConnectProjectId =
+  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID?.trim();
 
 const network =
   process.env.NEXT_PUBLIC_STACKS_NETWORK === "mainnet" ? "mainnet" : "testnet";
 
-const connectAny = connect as unknown as (
-  options?: Record<string, unknown>,
-) => Promise<unknown>;
 const requestAny = request as unknown as (
   methodOrConfig: unknown,
   params?: Record<string, unknown>,
 ) => Promise<unknown>;
 
+function pickAddressFromEntries(entries: unknown): string | null {
+  if (!Array.isArray(entries)) return null;
+
+  const parsed = entries
+    .map((entry) => {
+      const value = entry as Record<string, any> | null;
+      if (!value || typeof value.address !== "string") return null;
+
+      return {
+        address: value.address,
+        symbol: typeof value.symbol === "string" ? value.symbol : null,
+      };
+    })
+    .filter(
+      (entry): entry is { address: string; symbol: string | null } =>
+        Boolean(entry),
+    );
+
+  const preferred = parsed.find(
+    (entry) =>
+      entry.symbol?.toUpperCase() === "STX" || entry.address.startsWith("S"),
+  );
+
+  return preferred?.address || parsed[0]?.address || null;
+}
+
 function extractWalletAddress(payload: unknown): string | null {
+  if (typeof payload === "string") {
+    return payload.startsWith("S") ? payload : null;
+  }
+
   const value = payload as Record<string, any>;
   if (!value) return null;
 
   if (typeof value.address === "string") return value.address;
   if (typeof value.result?.address === "string") return value.result.address;
+
+  const addresses = pickAddressFromEntries(value.addresses);
+  if (addresses) return addresses;
+
+  const resultAddresses = pickAddressFromEntries(value.result?.addresses);
+  if (resultAddresses) return resultAddresses;
+
+  const accounts = pickAddressFromEntries(value.accounts);
+  if (accounts) return accounts;
+
+  const resultAccounts = pickAddressFromEntries(value.result?.accounts);
+  if (resultAccounts) return resultAccounts;
+
   if (typeof value.addresses?.stx?.[0]?.address === "string") {
     return value.addresses.stx[0].address;
   }
@@ -83,33 +154,46 @@ export function StacksWalletProvider({ children }: { children: ReactNode }) {
   const refreshWallet = useCallback(async () => {
     if (!isConnected()) {
       setAddress(null);
-      return;
+      return null;
     }
 
-    const methods = ["getAddresses", "stx_getAddresses"];
+    const methods = ["getAddresses", "stx_getAddresses", "stx_getAccounts"];
     for (const method of methods) {
       try {
-        const response = await walletRequest(method);
+        const response = await walletRequest(method, { network });
         const nextAddress = extractWalletAddress(response);
         if (nextAddress) {
           setAddress(nextAddress);
-          return;
+          return nextAddress;
         }
       } catch {
         // Try next provider method.
       }
     }
+
+    const cachedAddress = getLocalStorage()?.addresses?.stx?.[0]?.address || null;
+    setAddress(cachedAddress);
+    return cachedAddress;
   }, []);
 
   const connectWallet = useCallback(async () => {
     setConnecting(true);
     try {
-      await connectAny({
+      const response = await connect({
         network,
         forceWalletSelect: true,
-        approvedProviderIds: providers,
+        approvedProviderIds:
+          approvedProviders.length > 0 ? approvedProviders : undefined,
+        ...(walletConnectProjectId
+          ? { walletConnectProjectId }
+          : {}),
       });
-      await refreshWallet();
+
+      const nextAddress = extractWalletAddress(response) || (await refreshWallet());
+      if (nextAddress) {
+        setAddress(nextAddress);
+      }
+      return nextAddress;
     } finally {
       setConnecting(false);
     }
