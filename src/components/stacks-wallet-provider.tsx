@@ -9,13 +9,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  connect,
-  disconnect,
-  getLocalStorage,
-  isConnected,
-  request,
-} from "@stacks/connect";
+
+type ConnectModule = typeof import("@stacks/connect");
 
 type StacksWalletContextValue = {
   address: string | null;
@@ -67,10 +62,14 @@ const walletConnectProjectId =
 const network =
   process.env.NEXT_PUBLIC_STACKS_NETWORK === "mainnet" ? "mainnet" : "testnet";
 
-const requestAny = request as unknown as (
-  methodOrConfig: unknown,
-  params?: Record<string, unknown>,
-) => Promise<unknown>;
+let connectModulePromise: Promise<ConnectModule> | null = null;
+
+async function loadConnectModule(): Promise<ConnectModule> {
+  if (!connectModulePromise) {
+    connectModulePromise = import("@stacks/connect");
+  }
+  return connectModulePromise;
+}
 
 function pickAddressFromEntries(entries: unknown): string | null {
   if (!Array.isArray(entries)) return null;
@@ -135,6 +134,12 @@ async function walletRequest(
   method: string,
   params?: Record<string, unknown>,
 ): Promise<unknown> {
+  const { request } = await loadConnectModule();
+  const requestAny = request as unknown as (
+    methodOrConfig: unknown,
+    params?: Record<string, unknown>,
+  ) => Promise<unknown>;
+
   try {
     return await requestAny(method, params);
   } catch {
@@ -152,6 +157,8 @@ export function StacksWalletProvider({ children }: { children: ReactNode }) {
   const [connecting, setConnecting] = useState(false);
 
   const refreshWallet = useCallback(async () => {
+    const { getLocalStorage, isConnected } = await loadConnectModule();
+
     if (!isConnected()) {
       setAddress(null);
       return null;
@@ -179,6 +186,7 @@ export function StacksWalletProvider({ children }: { children: ReactNode }) {
   const connectWallet = useCallback(async () => {
     setConnecting(true);
     try {
+      const { connect } = await loadConnectModule();
       const response = await connect({
         network,
         forceWalletSelect: true,
@@ -200,6 +208,7 @@ export function StacksWalletProvider({ children }: { children: ReactNode }) {
   }, [refreshWallet]);
 
   const disconnectWallet = useCallback(async () => {
+    const { disconnect } = await loadConnectModule();
     await disconnect();
     setAddress(null);
   }, []);
