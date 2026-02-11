@@ -10,6 +10,7 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  transpilePackages: ["@stacks/connect", "@stacks/connect-ui"],
   rewrites: async () => {
     return [
       {
