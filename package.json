@@ -62,7 +62,7 @@
     "prettier-standalone": "^1.3.1-0",
     "react": "19.2.4",
     "react-chartjs-2": "^5.3.0",
-    "react-day-picker": "8.10.1",
+    "react-day-picker": "9.13.2",
     "react-dom": "19.2.4",
     "react-hook-form": "^7.54.1",
     "react-markdown": "^10.1.0",
@@ -72,7 +72,7 @@
     "sonner": "^1.7.1",
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7",
-    "vaul": "^0.9.6",
+    "vaul": "^1.1.2",
     "x402-stacks": "^2.0.1",
     "zod": "^3.24.1"
   },

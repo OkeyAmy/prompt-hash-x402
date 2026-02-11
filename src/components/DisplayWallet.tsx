@@ -66,12 +66,23 @@ export default function DisplayWallet() {
           variant="outline"
           className="ml-auto font-bold border-purple-900 text-purple-900 hover:text-purple-300 hover:border-purple-800"
         >
-          <Wallet className="md:mr-2 h-4 w-4" />
-          <span className="hidden md:inline">{shortAddress}</span>
+          <span className="relative md:mr-2 inline-flex">
+            <Wallet className="h-4 w-4" />
+            <span
+              className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-emerald-500"
+              aria-hidden="true"
+            />
+          </span>
+          <span className="hidden md:inline">
+            Connected {shortAddress ? `(${shortAddress})` : ""}
+          </span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-56 bg-gray-900 text-white border-gray-800">
-        <DropdownMenuLabel className="font-mono text-xs">{address}</DropdownMenuLabel>
+        <DropdownMenuLabel className="space-y-1">
+          <p className="text-xs text-emerald-400">Connected</p>
+          <p className="font-mono text-xs">{address}</p>
+        </DropdownMenuLabel>
         <DropdownMenuSeparator className="bg-gray-800" />
         <DropdownMenuItem
           onClick={() => void copyAddress()}
