@@ -12,8 +12,6 @@ import {
 
 type ConnectModule = typeof import("@stacks/connect");
 
-const LOG_ENDPOINT = "http://127.0.0.1:7244/ingest/40e57abd-55cf-4ea1-bcd5-c8a9d286bacc";
-
 type StacksWalletContextValue = {
   address: string | null;
   connected: boolean;
@@ -35,26 +33,43 @@ const providerAliasMap: Record<string, string> = {
   xverse: "XverseProviders.BitcoinProvider",
   xverseprovider: "XverseProviders.BitcoinProvider",
   "xverseproviders.bitcoinprovider": "XverseProviders.BitcoinProvider",
+  "xverseproviders.stacksprovider": "XverseProviders.BitcoinProvider",
   asigna: "AsignaProvider",
   asignaprovider: "AsignaProvider",
+  fordefi: "FordefiProviders.UtxoProvider",
+  fordefiprovider: "FordefiProviders.UtxoProvider",
+  "fordefiproviders.utxoprovider": "FordefiProviders.UtxoProvider",
   walletconnect: "WalletConnectProvider",
   walletconnectprovider: "WalletConnectProvider",
 };
 
-function normalizeProviderId(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  return providerAliasMap[trimmed.toLowerCase()] ?? trimmed;
+const knownProviderIds = new Set([
+  "LeatherProvider",
+  "XverseProviders.BitcoinProvider",
+  "AsignaProvider",
+  "FordefiProviders.UtxoProvider",
+  "WalletConnectProvider",
+]);
+
+function normalizeProviderId(value: string): string | null {
+  const trimmed = value.trim().replace(/^['"]|['"]$/g, "");
+  if (!trimmed) return null;
+  const normalized = providerAliasMap[trimmed.toLowerCase()] ?? trimmed;
+  if (!knownProviderIds.has(normalized)) {
+    return null;
+  }
+  return normalized;
 }
 
 const approvedProviders = Array.from(
   new Set(
     (
-  process.env.NEXT_PUBLIC_STACKS_WALLET_PROVIDERS || "LeatherProvider,xverse"
-)
+      process.env.NEXT_PUBLIC_STACKS_WALLET_PROVIDERS ||
+      "LeatherProvider,XverseProviders.BitcoinProvider"
+    )
       .split(",")
       .map(normalizeProviderId)
-      .filter(Boolean),
+      .filter((provider): provider is string => Boolean(provider)),
   ),
 );
 
@@ -154,6 +169,19 @@ async function walletRequest(
   }
 }
 
+function isUserCancellation(error: unknown): boolean {
+  const message = String(
+    (error as { message?: string } | null)?.message || "",
+  ).toLowerCase();
+  const code = (error as { code?: number } | null)?.code;
+  return (
+    code === -32000 ||
+    code === -31001 ||
+    message.includes("cancel") ||
+    message.includes("reject")
+  );
+}
+
 export function StacksWalletProvider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -162,20 +190,6 @@ export function StacksWalletProvider({ children }: { children: ReactNode }) {
     const { getLocalStorage, isConnected } = await loadConnectModule();
 
     if (!isConnected()) {
-      // #region agent log
-      fetch(LOG_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          location: "stacks-wallet-provider.tsx:refreshWallet",
-          message: "not_connected",
-          data: {},
-          timestamp: Date.now(),
-          runId: "pre-fix",
-          hypothesisId: "H2"
-        })
-      }).catch(()=>{});
-      // #endregion
       setAddress(null);
       return null;
     }
@@ -187,139 +201,53 @@ export function StacksWalletProvider({ children }: { children: ReactNode }) {
         const nextAddress = extractWalletAddress(response);
         if (nextAddress) {
           setAddress(nextAddress);
-          // #region agent log
-          fetch(LOG_ENDPOINT, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              location: "stacks-wallet-provider.tsx:refreshWallet",
-              message: "restored_session",
-              data: { hasUserData: true, addr: nextAddress?.slice?.(0, 6) + "..." + nextAddress?.slice?.(-4), method },
-              timestamp: Date.now(),
-              runId: "pre-fix",
-              hypothesisId: "H2"
-            })
-          }).catch(()=>{});
-          // #endregion
           return nextAddress;
         }
-      } catch (error) {
+      } catch {
         // Try next provider method.
-        // #region agent log
-        fetch(LOG_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: "stacks-wallet-provider.tsx:refreshWallet",
-            message: "method_failed",
-            data: { method, error: String(error) },
-            timestamp: Date.now(),
-            runId: "pre-fix",
-            hypothesisId: "H2"
-          })
-        }).catch(()=>{});
-        // #endregion
       }
     }
 
     const cachedAddress = getLocalStorage()?.addresses?.stx?.[0]?.address || null;
     setAddress(cachedAddress);
-    // #region agent log
-    fetch(LOG_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        location: "stacks-wallet-provider.tsx:refreshWallet",
-        message: "using_cached_address",
-        data: { hasCachedAddress: !!cachedAddress },
-        timestamp: Date.now(),
-        runId: "pre-fix",
-        hypothesisId: "H2"
-      })
-    }).catch(()=>{});
-    // #endregion
     return cachedAddress;
   }, []);
 
   const connectWallet = useCallback(async () => {
     setConnecting(true);
     try {
-      // #region agent log
-      fetch(LOG_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          location: "stacks-wallet-provider.tsx:connectWallet",
-          message: "connect_initiated",
-          data: { network, approvedProviders },
-          timestamp: Date.now(),
-          runId: "pre-fix",
-          hypothesisId: "H1"
-        })
-      }).catch(()=>{});
-      // #endregion
-      
       const { connect } = await loadConnectModule();
-      const response = await connect({
+      const baseOptions = {
         network,
         forceWalletSelect: true,
-        approvedProviderIds:
-          approvedProviders.length > 0 ? approvedProviders : undefined,
         ...(walletConnectProjectId
           ? { walletConnectProjectId }
           : {}),
-      });
+      };
+
+      let response: unknown;
+      try {
+        response = await connect({
+          ...baseOptions,
+          ...(approvedProviders.length > 0
+            ? { approvedProviderIds: approvedProviders }
+            : {}),
+        });
+      } catch (error) {
+        if (approvedProviders.length === 0 || isUserCancellation(error)) {
+          throw error;
+        }
+        // Fallback for misconfigured provider allowlist in env.
+        response = await connect(baseOptions);
+      }
 
       const nextAddress = extractWalletAddress(response) || (await refreshWallet());
       if (nextAddress) {
         setAddress(nextAddress);
-        // #region agent log
-        fetch(LOG_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: "stacks-wallet-provider.tsx:connectWallet",
-            message: "connect_success",
-            data: { hasAddr: !!nextAddress, addr: nextAddress?.slice?.(0, 6) + "..." + nextAddress?.slice?.(-4) },
-            timestamp: Date.now(),
-            runId: "pre-fix",
-            hypothesisId: "H1"
-          })
-        }).catch(()=>{});
-        // #endregion
-      } else {
-        // #region agent log
-        fetch(LOG_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: "stacks-wallet-provider.tsx:connectWallet",
-            message: "no_address_after_connect",
-            data: {},
-            timestamp: Date.now(),
-            runId: "pre-fix",
-            hypothesisId: "H1"
-          })
-        }).catch(()=>{});
-        // #endregion
       }
       return nextAddress;
     } catch (error) {
       console.error("Wallet connection error:", error);
-      // #region agent log
-      fetch(LOG_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          location: "stacks-wallet-provider.tsx:connectWallet",
-          message: "connect_error",
-          data: { error: String(error) },
-          timestamp: Date.now(),
-          runId: "pre-fix",
-          hypothesisId: "H1"
-        })
-      }).catch(()=>{});
-      // #endregion
       return null;
     } finally {
       setConnecting(false);
