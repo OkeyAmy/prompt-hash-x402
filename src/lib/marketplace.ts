@@ -35,9 +35,9 @@ export function getCurrencyDecimals(currency: Currency): number {
   return currency === "SBTC" ? 8 : 6;
 }
 
-export function formatBaseUnits(amountBaseUnits: string, currency: Currency): string {
+export function formatBaseUnits(amountBaseUnits: string | number, currency: Currency): string {
   const decimals = getCurrencyDecimals(currency);
-  const raw = amountBaseUnits || "0";
+  const raw = String(amountBaseUnits ?? 0);
   const padded = raw.padStart(decimals + 1, "0");
   const whole = padded.slice(0, -decimals);
   const fractional = padded.slice(-decimals).replace(/0+$/, "");

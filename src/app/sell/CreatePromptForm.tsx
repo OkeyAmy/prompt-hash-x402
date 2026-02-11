@@ -18,6 +18,7 @@ import {
   type Currency,
 } from "@/lib/marketplace";
 import { useStacksWallet } from "@/components/stacks-wallet-provider";
+import { LISTING_FEE_MICRO_STX, extractTransactionHash } from "@/lib/stacks";
 
 type FormData = {
   imageUrl: string;
@@ -40,7 +41,7 @@ const initialData: FormData = {
 };
 
 export function CreatePromptForm() {
-  const { address, connected, connectWallet } = useStacksWallet();
+  const { address, connected, connectWallet, requestWallet } = useStacksWallet();
   const [formData, setFormData] = useState<FormData>(initialData);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +83,49 @@ export function CreatePromptForm() {
       );
 
       setSubmitting(true);
+
+      let listingFeeTx: string | null = null;
+
+      // Check if listing fee is enabled
+      const enableListingFee = process.env.NEXT_PUBLIC_ENABLE_LISTING_FEE === "true";
+      if (enableListingFee) {
+        const platformWallet = process.env.NEXT_PUBLIC_PLATFORM_WALLET;
+        if (!platformWallet) {
+          throw new Error("Platform wallet not configured");
+        }
+
+        // Request listing fee payment (0.001 STX = 1000 microSTX)
+        try {
+          const feePaymentResponse = await requestWallet("stx_transferStx", {
+            recipient: platformWallet,
+            amount: "1000",
+            memo: `Listing: ${formData.title.slice(0, 30)}`,
+          });
+
+          // Extract transaction hash
+          const extractTxHash = (response: unknown): string | null => {
+            const res = response as Record<string, any>;
+            return (
+              res?.txId ||
+              res?.txid ||
+              res?.tx_id ||
+              res?.txHash ||
+              res?.result?.txId ||
+              null
+            );
+          };
+
+          listingFeeTx = extractTxHash(feePaymentResponse);
+          if (!listingFeeTx) {
+            throw new Error("Failed to get listing fee transaction hash");
+          }
+        } catch (feeError) {
+          throw new Error(
+            `Listing fee payment failed: ${feeError instanceof Error ? feeError.message : "Unknown error"}`,
+          );
+        }
+      }
+
       const response = await fetch("/api/prompts", {
         method: "POST",
         headers: {
@@ -98,6 +142,7 @@ export function CreatePromptForm() {
           currency: normalizeCurrency(formData.currency),
           seller_wallet: walletAddress,
           is_listed: true,
+          listing_fee_tx: listingFeeTx,
         }),
       });
 
@@ -106,7 +151,11 @@ export function CreatePromptForm() {
         throw new Error(data.error || "Failed to create prompt");
       }
 
-      setSuccess("Prompt listed successfully.");
+      setSuccess(
+        enableListingFee
+          ? "Listing fee paid! Prompt listed successfully."
+          : "Prompt listed successfully.",
+      );
       setFormData(initialData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create prompt");
