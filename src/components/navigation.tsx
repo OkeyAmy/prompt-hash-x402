@@ -1,3 +1,5 @@
+"use client";
+
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
@@ -12,7 +14,12 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
-import DisplayWallet from "./DisplayWallet";
+import dynamic from "next/dynamic";
+
+const DisplayWallet = dynamic(
+  () => import("./DisplayWallet").then((m) => m.default),
+  { ssr: false }
+);
 
 export function Navigation() {
   return (

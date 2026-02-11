@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { StacksWalletProvider } from "@/components/stacks-wallet-provider";
+import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
   title: "Prompt Hash",
@@ -30,7 +31,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body><StacksWalletProvider>{children}</StacksWalletProvider></body>
+      <body>
+        <StacksWalletProvider>
+          {children}
+          <Toaster />
+        </StacksWalletProvider>
+      </body>
     </html>
   );
 }

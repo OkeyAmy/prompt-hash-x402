@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 
 type ConnectModule = typeof import("@stacks/connect");
 
@@ -248,6 +249,13 @@ export function StacksWalletProvider({ children }: { children: ReactNode }) {
       return nextAddress;
     } catch (error) {
       console.error("Wallet connection error:", error);
+      const msg =
+        error instanceof Error ? error.message : "Wallet connection failed";
+      toast.error("Could not connect wallet", {
+        description: msg.includes("module") || msg.includes("factory")
+          ? "Please try again or refresh the page. If the problem persists, the app may need a redeploy."
+          : msg,
+      });
       return null;
     } finally {
       setConnecting(false);
