@@ -5,6 +5,7 @@ import {
   type Currency,
 } from "@/lib/marketplace";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { verifyStacksTransaction } from "@/lib/stacks";
 
 type CreatePromptPayload = {
   title?: string;
@@ -16,6 +17,7 @@ type CreatePromptPayload = {
   currency?: string;
   seller_wallet?: string;
   is_listed?: boolean;
+  listing_fee_tx?: string | null;
 };
 
 function sanitizeWallet(value: string | null | undefined): string {
@@ -111,6 +113,45 @@ export async function POST(request: NextRequest) {
       );
     }
     validateBaseUnits(payload.price_base_units);
+
+    // Verify listing fee if provided
+    const enableListingFee = process.env.NEXT_PUBLIC_ENABLE_LISTING_FEE === "true";
+    if (enableListingFee && payload.listing_fee_tx) {
+      const platformWallet = process.env.PLATFORM_WALLET;
+      if (!platformWallet) {
+        return NextResponse.json(
+          { error: "Platform wallet not configured" },
+          { status: 500 },
+        );
+      }
+
+      try {
+        const isValid = await verifyStacksTransaction(
+          payload.listing_fee_tx,
+          platformWallet,
+          "1000", // 0.001 STX in microSTX
+        );
+
+        if (!isValid) {
+          return NextResponse.json(
+            { error: "Invalid or unconfirmed listing fee transaction" },
+            { status: 400 },
+          );
+        }
+      } catch (error) {
+        return NextResponse.json(
+          {
+            error: `Listing fee verification failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+          },
+          { status: 400 },
+        );
+      }
+    } else if (enableListingFee && !payload.listing_fee_tx) {
+      return NextResponse.json(
+        { error: "Listing fee transaction required" },
+        { status: 400 },
+      );
+    }
 
     const supabase = getSupabaseServiceClient();
     const { data, error } = await supabase

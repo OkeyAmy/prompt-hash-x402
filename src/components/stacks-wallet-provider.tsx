@@ -33,26 +33,43 @@ const providerAliasMap: Record<string, string> = {
   xverse: "XverseProviders.BitcoinProvider",
   xverseprovider: "XverseProviders.BitcoinProvider",
   "xverseproviders.bitcoinprovider": "XverseProviders.BitcoinProvider",
+  "xverseproviders.stacksprovider": "XverseProviders.BitcoinProvider",
   asigna: "AsignaProvider",
   asignaprovider: "AsignaProvider",
+  fordefi: "FordefiProviders.UtxoProvider",
+  fordefiprovider: "FordefiProviders.UtxoProvider",
+  "fordefiproviders.utxoprovider": "FordefiProviders.UtxoProvider",
   walletconnect: "WalletConnectProvider",
   walletconnectprovider: "WalletConnectProvider",
 };
 
-function normalizeProviderId(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  return providerAliasMap[trimmed.toLowerCase()] ?? trimmed;
+const knownProviderIds = new Set([
+  "LeatherProvider",
+  "XverseProviders.BitcoinProvider",
+  "AsignaProvider",
+  "FordefiProviders.UtxoProvider",
+  "WalletConnectProvider",
+]);
+
+function normalizeProviderId(value: string): string | null {
+  const trimmed = value.trim().replace(/^['"]|['"]$/g, "");
+  if (!trimmed) return null;
+  const normalized = providerAliasMap[trimmed.toLowerCase()] ?? trimmed;
+  if (!knownProviderIds.has(normalized)) {
+    return null;
+  }
+  return normalized;
 }
 
 const approvedProviders = Array.from(
   new Set(
     (
-  process.env.NEXT_PUBLIC_STACKS_WALLET_PROVIDERS || "LeatherProvider,xverse"
-)
+      process.env.NEXT_PUBLIC_STACKS_WALLET_PROVIDERS ||
+      "LeatherProvider,XverseProviders.BitcoinProvider"
+    )
       .split(",")
       .map(normalizeProviderId)
-      .filter(Boolean),
+      .filter((provider): provider is string => Boolean(provider)),
   ),
 );
 
@@ -152,6 +169,19 @@ async function walletRequest(
   }
 }
 
+function isUserCancellation(error: unknown): boolean {
+  const message = String(
+    (error as { message?: string } | null)?.message || "",
+  ).toLowerCase();
+  const code = (error as { code?: number } | null)?.code;
+  return (
+    code === -32000 ||
+    code === -31001 ||
+    message.includes("cancel") ||
+    message.includes("reject")
+  );
+}
+
 export function StacksWalletProvider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -187,21 +217,38 @@ export function StacksWalletProvider({ children }: { children: ReactNode }) {
     setConnecting(true);
     try {
       const { connect } = await loadConnectModule();
-      const response = await connect({
+      const baseOptions = {
         network,
         forceWalletSelect: true,
-        approvedProviderIds:
-          approvedProviders.length > 0 ? approvedProviders : undefined,
         ...(walletConnectProjectId
           ? { walletConnectProjectId }
           : {}),
-      });
+      };
+
+      let response: unknown;
+      try {
+        response = await connect({
+          ...baseOptions,
+          ...(approvedProviders.length > 0
+            ? { approvedProviderIds: approvedProviders }
+            : {}),
+        });
+      } catch (error) {
+        if (approvedProviders.length === 0 || isUserCancellation(error)) {
+          throw error;
+        }
+        // Fallback for misconfigured provider allowlist in env.
+        response = await connect(baseOptions);
+      }
 
       const nextAddress = extractWalletAddress(response) || (await refreshWallet());
       if (nextAddress) {
         setAddress(nextAddress);
       }
       return nextAddress;
+    } catch (error) {
+      console.error("Wallet connection error:", error);
+      return null;
     } finally {
       setConnecting(false);
     }

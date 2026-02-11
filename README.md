@@ -27,6 +27,12 @@ Required vars:
 - `SERVER_ADDRESS`
 - `SERVER_PRIVATE_KEY` (server-side only)
 
+Wallet client vars:
+
+- `NEXT_PUBLIC_STACKS_NETWORK` (`testnet` or `mainnet`)
+- `NEXT_PUBLIC_STACKS_WALLET_PROVIDERS` (comma-separated provider IDs, e.g. `LeatherProvider,XverseProviders.BitcoinProvider`)
+- `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` (optional, required only when using WalletConnect)
+
 ## Supabase migration
 
 Apply SQL migration:

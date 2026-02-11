@@ -49,3 +49,10 @@ rad.json
 *.flf
 #Test results file
 TestResults.xml
+
+
+hack/
+.cursor/
+
+
+IMPLEMENTATION_COMPLETE.md
