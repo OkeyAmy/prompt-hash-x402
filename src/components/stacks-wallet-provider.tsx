@@ -9,7 +9,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { connect, disconnect, isConnected, request } from "@stacks/connect";
+import { connect, disconnect, getUserData } from "@stacks/connect";
+const LOG_ENDPOINT = "http://127.0.0.1:7244/ingest/40e57abd-55cf-4ea1-bcd5-c8a9d286bacc";
 
 type StacksWalletContextValue = {
   address: string | null;
@@ -38,42 +39,33 @@ const network =
 
 const connectAny = connect as unknown as (
   options?: Record<string, unknown>,
-) => Promise<unknown>;
-const requestAny = request as unknown as (
-  methodOrConfig: unknown,
-  params?: Record<string, unknown>,
-) => Promise<unknown>;
+) => void;
 
-function extractWalletAddress(payload: unknown): string | null {
+function extractWalletAddress(payload: unknown, networkType: string): string | null {
   const value = payload as Record<string, any>;
   if (!value) return null;
 
-  if (typeof value.address === "string") return value.address;
-  if (typeof value.result?.address === "string") return value.result.address;
-  if (typeof value.addresses?.stx?.[0]?.address === "string") {
-    return value.addresses.stx[0].address;
-  }
-  if (typeof value.result?.addresses?.stx?.[0]?.address === "string") {
-    return value.result.addresses.stx[0].address;
+  // Try multiple paths for address extraction (for @stacks/connect v8)
+  const paths = [
+    // From userSession in auth response
+    value.userSession?.loadUserData?.()?.profile?.stxAddress?.[networkType],
+    // From profile directly
+    value.profile?.stxAddress?.[networkType],
+    // From addresses array
+    value.addresses?.stx?.[0]?.address,
+    value.result?.addresses?.stx?.[0]?.address,
+    // Direct address field
+    value.address,
+    value.result?.address,
+  ];
+
+  for (const path of paths) {
+    if (typeof path === "string" && path.startsWith("S")) {
+      return path;
+    }
   }
 
   return null;
-}
-
-async function walletRequest(
-  method: string,
-  params?: Record<string, unknown>,
-): Promise<unknown> {
-  try {
-    return await requestAny(method, params);
-  } catch {
-    try {
-      return await requestAny({ method, params });
-    } catch {
-      if (!params) return requestAny(method);
-      throw new Error(`Wallet request failed for method: ${method}`);
-    }
-  }
 }
 
 export function StacksWalletProvider({ children }: { children: ReactNode }) {
@@ -81,39 +73,197 @@ export function StacksWalletProvider({ children }: { children: ReactNode }) {
   const [connecting, setConnecting] = useState(false);
 
   const refreshWallet = useCallback(async () => {
-    if (!isConnected()) {
-      setAddress(null);
-      return;
-    }
-
-    const methods = ["getAddresses", "stx_getAddresses"];
-    for (const method of methods) {
-      try {
-        const response = await walletRequest(method);
-        const nextAddress = extractWalletAddress(response);
-        if (nextAddress) {
-          setAddress(nextAddress);
+    // Check for existing authenticated session
+    try {
+      const userData = await getUserData();
+      if (userData?.profile?.stxAddress) {
+        const addr = userData.profile.stxAddress[network];
+        if (addr) {
+          setAddress(addr);
+          // #region agent log
+          fetch(LOG_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              location: "stacks-wallet-provider.tsx:refreshWallet",
+              message: "restored_session",
+              data: { hasUserData: true, addr: addr?.slice?.(0, 6) + "..." + addr?.slice?.(-4) },
+              timestamp: Date.now(),
+              runId: "pre-fix",
+              hypothesisId: "H2"
+            })
+          }).catch(()=>{});
+          // #endregion
           return;
         }
-      } catch {
-        // Try next provider method.
       }
+    } catch (error) {
+      // No existing session or error fetching user data
+      console.debug("No existing wallet session found");
+      // #region agent log
+      fetch(LOG_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          location: "stacks-wallet-provider.tsx:refreshWallet",
+          message: "no_existing_session_or_error",
+          data: { error: String(error) },
+          timestamp: Date.now(),
+          runId: "pre-fix",
+          hypothesisId: "H2"
+        })
+      }).catch(()=>{});
+      // #endregion
     }
+    setAddress(null);
   }, []);
 
   const connectWallet = useCallback(async () => {
     setConnecting(true);
     try {
-      await connectAny({
-        network,
-        forceWalletSelect: true,
-        approvedProviderIds: providers,
+      // #region agent log
+      fetch(LOG_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          location: "stacks-wallet-provider.tsx:connectWallet",
+          message: "connect_initiated",
+          data: { network, providers },
+          timestamp: Date.now(),
+          runId: "pre-fix",
+          hypothesisId: "H1"
+        })
+      }).catch(()=>{});
+      // #endregion
+      await new Promise<void>((resolve, reject) => {
+        connectAny({
+          network,
+          forceWalletSelect: true,
+          approvedProviderIds: providers,
+          onFinish: (authResponse: any) => {
+            try {
+              // Extract address from authentication response
+              const addr = extractWalletAddress(authResponse, network);
+              
+              // #region agent log
+              fetch(LOG_ENDPOINT, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  location: "stacks-wallet-provider.tsx:onFinish",
+                  message: "onFinish_received",
+                  data: { hasAddr: !!addr, keys: Object.keys(authResponse || {}).slice(0,6) },
+                  timestamp: Date.now(),
+                  runId: "pre-fix",
+                  hypothesisId: "H1"
+                })
+              }).catch(()=>{});
+              // #endregion
+
+              if (addr) {
+                setAddress(addr);
+                resolve();
+              } else {
+                // Fallback: try to get from user data
+                getUserData()
+                  .then((userData) => {
+                    const fallbackAddr = userData?.profile?.stxAddress?.[network];
+                    if (fallbackAddr) {
+                      setAddress(fallbackAddr);
+                      resolve();
+                    } else {
+                      // #region agent log
+                      fetch(LOG_ENDPOINT, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          location: "stacks-wallet-provider.tsx:onFinish",
+                          message: "no_address_in_auth_and_no_fallback",
+                          data: {},
+                          timestamp: Date.now(),
+                          runId: "pre-fix",
+                          hypothesisId: "H1"
+                        })
+                      }).catch(()=>{});
+                      // #endregion
+                      reject(new Error("No address found in auth response"));
+                    }
+                  })
+                  .catch(() => {
+                    // #region agent log
+                    fetch(LOG_ENDPOINT, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        location: "stacks-wallet-provider.tsx:onFinish",
+                        message: "getUserData_failed",
+                        data: {},
+                        timestamp: Date.now(),
+                        runId: "pre-fix",
+                        hypothesisId: "H1"
+                      })
+                    }).catch(()=>{});
+                    // #endregion
+                    reject(new Error("No address found in auth response"));
+                  });
+              }
+            } catch (error) {
+              // #region agent log
+              fetch(LOG_ENDPOINT, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  location: "stacks-wallet-provider.tsx:onFinish",
+                  message: "onFinish_exception",
+                  data: { error: String(error) },
+                  timestamp: Date.now(),
+                  runId: "pre-fix",
+                  hypothesisId: "H1"
+                })
+              }).catch(()=>{});
+              // #endregion
+              reject(error);
+            }
+          },
+          onCancel: () => {
+            // #region agent log
+            fetch(LOG_ENDPOINT, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                location: "stacks-wallet-provider.tsx:connectAny",
+                message: "user_cancelled_connect",
+                data: {},
+                timestamp: Date.now(),
+                runId: "pre-fix",
+                hypothesisId: "H1"
+              })
+            }).catch(()=>{});
+            // #endregion
+            reject(new Error("User cancelled wallet connection"));
+          },
+        });
       });
-      await refreshWallet();
+    } catch (error) {
+      console.error("Wallet connection error:", error);
+      // #region agent log
+      fetch(LOG_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          location: "stacks-wallet-provider.tsx:connectWallet",
+          message: "connect_error",
+          data: { error: String(error) },
+          timestamp: Date.now(),
+          runId: "pre-fix",
+          hypothesisId: "H1"
+        })
+      }).catch(()=>{});
+      // #endregion
     } finally {
       setConnecting(false);
     }
-  }, [refreshWallet]);
+  }, []);
 
   const disconnectWallet = useCallback(async () => {
     await disconnect();
@@ -121,11 +271,27 @@ export function StacksWalletProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const requestWallet = useCallback(
-    async (method: string, params?: Record<string, unknown>) =>
-      walletRequest(method, params),
+    async (method: string, params?: Record<string, unknown>) => {
+      // For x402 payment signing and other wallet requests
+      return new Promise((resolve, reject) => {
+        try {
+          // Use connect with appropriate method
+          connectAny({
+            network,
+            method,
+            params,
+            onFinish: (response: any) => resolve(response),
+            onCancel: () => reject(new Error("User cancelled request")),
+          } as any);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    },
     [],
   );
 
+  // Check for existing session on mount
   useEffect(() => {
     void refreshWallet();
   }, [refreshWallet]);

@@ -5,6 +5,7 @@ import {
   Menu,
   Search,
   ShoppingCart,
+  ShoppingBag,
   Settings,
   User,
   MessageCircle,
@@ -59,13 +60,6 @@ export function Navigation() {
               <Settings className="h-4 w-4" />
               <span>Governance</span>
             </Link>
-            <Link
-              href="/profile"
-              className="transition-colors hover:text-gray-300 text-white flex items-center gap-1"
-            >
-              <User className="h-4 w-4" />
-              <span>Profile</span>
-            </Link>
           </nav>
         </div>
 
@@ -109,13 +103,6 @@ export function Navigation() {
               >
                 <Settings className="h-4 w-4" />
                 <span>Governance</span>
-              </Link>
-              <Link
-                href="/profile"
-                className="hover:text-gray-300 flex items-center gap-2"
-              >
-                <User className="h-4 w-4" />
-                <span>Profile</span>
               </Link>
             </nav>
           </SheetContent>
