@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { StarknetProvider } from "@/components/starknet-provider";
-import { ThirdwebProvider } from "thirdweb/react";
+import { StacksWalletProvider } from "@/components/stacks-wallet-provider";
 
 export const metadata: Metadata = {
   title: "Prompt Hash",
@@ -31,9 +30,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>
-        <ThirdwebProvider>{children}</ThirdwebProvider>
-      </body>
+      <body><StacksWalletProvider>{children}</StacksWalletProvider></body>
     </html>
   );
 }

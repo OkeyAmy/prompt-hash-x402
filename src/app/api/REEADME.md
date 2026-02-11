@@ -1,3 +1,3 @@
 # About
 
-contains the js API routes, models, db details
+Contains Next.js API routes for marketplace browse/list/update and x402-gated premium content access.

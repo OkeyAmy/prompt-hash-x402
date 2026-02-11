@@ -18,6 +18,9 @@ export default function StatsCounter() {
     transactions: 250000,
   };
 
+  const easeInOutCubic = (t: number) =>
+    t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1;
+
   useEffect(() => {
     const duration = 2000; // 2 seconds animation
     const steps = 60;
@@ -28,7 +31,7 @@ export default function StatsCounter() {
     const timer = setInterval(() => {
       step++;
 
-      const progress = Math.easeInOutCubic(step / steps);
+      const progress = easeInOutCubic(step / steps);
 
       setCounts({
         users: Math.floor(progress * targets.users),
@@ -44,10 +47,6 @@ export default function StatsCounter() {
 
     return () => clearInterval(timer);
   }, []);
-
-  // Easing function
-  Math.easeInOutCubic = (t) =>
-    t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1;
 
   return (
     <section className="py-12 bg-black">

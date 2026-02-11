@@ -1,8 +1,10 @@
-import { useState, ChangeEvent, FormEvent, useMemo } from "react";
+"use client";
+
+import { useState, type ChangeEvent } from "react";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, DollarSign, Loader2 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -10,181 +12,104 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PROMPT_HASH_BNB_ADDRESS, PROMPT_HASH_EVM_ABI } from "@/lib/constants";
-import { useRouter } from "next/navigation";
-import { getContract, prepareContractCall, toWei } from "thirdweb";
-import { useSendTransaction } from "thirdweb/react";
-import { client } from "@/components/thirdwebClient";
-import { bscTestnet } from "thirdweb/chains";
-import { USDtoBNB } from "@/lib/utils";
+import {
+  normalizeCurrency,
+  parseDisplayAmountToBaseUnits,
+  type Currency,
+} from "@/lib/marketplace";
+import { useStacksWallet } from "@/components/stacks-wallet-provider";
 
-interface FormData {
+type FormData = {
   imageUrl: string;
   title: string;
   description: string;
+  paidContent: string;
   category: string;
   price: string;
-}
+  currency: Currency;
+};
+
+const initialData: FormData = {
+  imageUrl: "",
+  title: "",
+  description: "",
+  paidContent: "",
+  category: "",
+  price: "0.1",
+  currency: "STX",
+};
 
 export function CreatePromptForm() {
-  const [formData, setFormData] = useState<FormData>({
-    imageUrl: "",
-    title: "",
-    description: "",
-    category: "",
-    price: "1",
-  });
-
-  const [touched, setTouched] = useState<{ [key: string]: boolean }>({});
-
-  const getErrors = () => {
-    const newErrors: { [key: string]: string | null } = {};
-
-    if (touched.imageUrl && !formData.imageUrl.trim())
-      newErrors.imageUrl = "Image URL is required";
-
-    if (touched.title) {
-      if (!formData.title.trim()) newErrors.title = "Title is required";
-      else if (formData.title.length < 3)
-        newErrors.title = "Title must be at least 3 characters";
-    }
-
-    if (touched.description) {
-      if (!formData.description.trim())
-        newErrors.description = "Description is required";
-      else if (formData.description.length < 10)
-        newErrors.description = "Must be 10+ chars";
-    }
-
-    if (touched.category && !formData.category)
-      newErrors.category = "Category is required";
-
-    if (touched.price) {
-      if (!formData.price.trim()) newErrors.price = "Price is required";
-      else if (Number(formData.price) < 1)
-        newErrors.price = "Must be at least $1";
-    }
-
-    return newErrors;
-  };
-
-  const [errors, setErrors] = useState<{ [key: string]: string | null }>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { address, connected, connectWallet } = useStacksWallet();
+  const [formData, setFormData] = useState<FormData>(initialData);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const handleChange = (
-    e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-  ) => {
-    const { name, value } = e.target;
+  const onInput = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = event.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
-    // if (errors[name]) {
-    //   setErrors((prev) => ({ ...prev, [name]: null }));
-    // }
-    setTouched((prev) => ({ ...prev, [name]: true }));
   };
 
-  const handleCategoryChange = (value: string) => {
-    setFormData((prev) => ({ ...prev, category: value }));
-    if (errors.category) {
-      setErrors((prev) => ({ ...prev, category: null }));
-    }
-  };
-
-  const validateForm = (): boolean => {
-    const newErrors: { [key: string]: string } = {};
-
-    if (!formData.imageUrl.trim()) newErrors.imageUrl = "Image URL is required";
-    if (!formData.title.trim()) newErrors.title = "Title is required";
-    if (formData.title.length < 3)
-      newErrors.title = "Title must be at least 3 characters";
-    if (!formData.description.trim())
-      newErrors.description = "Description is required";
-    if (formData.description.length < 10)
-      newErrors.description = "Description must be at least 10 characters";
-    if (!formData.category) newErrors.category = "Category is required";
-    if (!formData.price) newErrors.price = "Price is required";
-    if (isNaN(Number(formData.price)) || Number(formData.price) < 1) {
-      newErrors.price = "Price must be at least 1 USD";
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const contract = getContract({
-    client,
-    chain: bscTestnet,
-    address: PROMPT_HASH_BNB_ADDRESS,
-    abi: PROMPT_HASH_EVM_ABI,
-  });
-
-  // const transaction = useMemo(() => {
-
-  //   return call;
-  // }, [formData]);
-
-  const { push } = useRouter();
-
-  const {
-    mutateAsync: createPrompt,
-    isPending,
-    isSuccess: createPromptSuccessful,
-    isError,
-  } = useSendTransaction();
-
-  const handleSubmit = async () => {
+  const submit = async () => {
     setError(null);
     setSuccess(null);
 
-    if (!validateForm()) return;
-
-    setIsSubmitting(true);
-
-    console.log(contract.address);
+    if (!connected || !address) {
+      await connectWallet();
+    }
+    if (!address) {
+      setError("Connect a Stacks wallet to list a prompt.");
+      return;
+    }
 
     try {
-      console.log("Creating prompt with:");
-      console.log("- Title:", formData.title);
-      console.log("- Price:", formData.price, "BNB");
-      console.log("- Category:", formData.category);
+      if (!formData.title.trim() || !formData.description.trim()) {
+        throw new Error("Title and description are required.");
+      }
+      if (!formData.paidContent.trim()) {
+        throw new Error("Paid content is required.");
+      }
+      if (!formData.category.trim()) {
+        throw new Error("Category is required.");
+      }
 
-      const bnbValue = USDtoBNB(Number(formData.price), "BNB").toString();
+      const baseUnits = parseDisplayAmountToBaseUnits(
+        formData.price,
+        formData.currency,
+      );
 
-      const valueInWei = (Number(formData.price) * 10) ^ 18;
-      const weiInteger = Math.floor(valueInWei);
-
-      const call = prepareContractCall({
-        contract,
-        method: "create",
-        params: [
-          toWei(bnbValue),
-          formData.title,
-          formData.description,
-          formData.category,
-          formData.imageUrl,
-        ],
-        value: toWei(bnbValue), // 0.0002 BNB
+      setSubmitting(true);
+      const response = await fetch("/api/prompts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-wallet-address": address,
+        },
+        body: JSON.stringify({
+          title: formData.title,
+          description: formData.description,
+          paid_content: formData.paidContent,
+          category: formData.category,
+          image_url: formData.imageUrl || null,
+          price_base_units: baseUnits,
+          currency: normalizeCurrency(formData.currency),
+          seller_wallet: address,
+          is_listed: true,
+        }),
       });
 
-      const { transactionHash: txHash } = await createPrompt(call);
-      console.log("Transaction sent: ", txHash);
-      setSuccess("Prompt created successfully!");
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to create prompt");
+      }
 
-      // Reset form
-      setFormData({
-        imageUrl: "",
-        title: "",
-        description: "",
-        category: "",
-        price: "0.0002",
-      });
-      push("/browse");
+      setSuccess("Prompt listed successfully.");
+      setFormData(initialData);
     } catch (err) {
-      console.error("Error creating prompt:", err);
       setError(err instanceof Error ? err.message : "Failed to create prompt");
     } finally {
-      setIsSubmitting(false);
+      setSubmitting(false);
     }
   };
 
@@ -194,136 +119,119 @@ export function CreatePromptForm() {
         <div className="space-y-2">
           <label className="text-sm font-medium">Image URL</label>
           <Input
-            placeholder="Enter image URL"
+            placeholder="https://..."
             name="imageUrl"
             value={formData.imageUrl}
-            onChange={handleChange}
-            className={errors.imageUrl ? "border-red-500" : "border-purple-400"}
+            onChange={onInput}
           />
-          {errors.imageUrl && (
-            <p className="text-sm text-red-500 flex items-center gap-1">
-              <AlertCircle className="h-3 w-3" />
-              {errors.imageUrl}
-            </p>
-          )}
         </div>
-
         <div className="space-y-2">
           <label className="text-sm font-medium">Title</label>
           <Input
-            placeholder="Enter prompt title"
+            placeholder="Prompt title"
             name="title"
             value={formData.title}
-            onChange={handleChange}
-            className={errors.title ? "border-red-500" : "border-purple-400"}
+            onChange={onInput}
           />
-          {errors.title && (
-            <p className="text-sm text-red-500 flex items-center gap-1">
-              <AlertCircle className="h-3 w-3" />
-              {errors.title}
-            </p>
-          )}
         </div>
       </div>
 
       <div className="space-y-2">
         <label className="text-sm font-medium">Description</label>
         <Textarea
-          placeholder="Enter prompt description..."
           name="description"
           value={formData.description}
-          onChange={handleChange}
-          className={
-            errors.description ? "border-red-500" : "border-purple-400"
-          }
-          rows={4}
+          onChange={onInput}
+          rows={3}
+          placeholder="Public metadata shown before purchase"
         />
-        {errors.description && (
-          <p className="text-sm text-red-500 flex items-center gap-1">
-            <AlertCircle className="h-3 w-3" />
-            {errors.description}
-          </p>
-        )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="space-y-2">
+        <label className="text-sm font-medium">Paid Content</label>
+        <Textarea
+          name="paidContent"
+          value={formData.paidContent}
+          onChange={onInput}
+          rows={6}
+          placeholder="Premium content unlocked after x402 payment"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="space-y-2">
           <label className="text-sm font-medium">Category</label>
           <Select
             value={formData.category}
-            onValueChange={handleCategoryChange}
+            onValueChange={(value) =>
+              setFormData((prev) => ({ ...prev, category: value }))
+            }
           >
-            <SelectTrigger
-              className={
-                errors.category ? "border-red-500" : "border-purple-400"
-              }
-            >
+            <SelectTrigger>
               <SelectValue placeholder="Select category" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="Marketing">Marketing</SelectItem>
               <SelectItem value="Creative Writing">Creative Writing</SelectItem>
               <SelectItem value="Programming">Programming</SelectItem>
-              <SelectItem value="Music">Music</SelectItem>
-              <SelectItem value="Gaming">Gaming</SelectItem>
+              <SelectItem value="Business">Business</SelectItem>
               <SelectItem value="Other">Other</SelectItem>
             </SelectContent>
           </Select>
-          {errors.category && (
-            <p className="text-sm text-red-500 flex items-center gap-1">
-              <AlertCircle className="h-3 w-3" />
-              {errors.category}
-            </p>
-          )}
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-medium">Price (USD)</label>
-          <div className="relative">
-            <DollarSign className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              type="number"
-              placeholder="2.00"
-              name="price"
-              value={formData.price}
-              onChange={handleChange}
-              step="1"
-              min={2}
-              max={1000}
-              className={`pl-9 ${
-                errors.price ? "border-red-500" : "border-purple-400"
-              }`}
-            />
-          </div>
-          {errors.price && (
-            <p className="text-sm text-red-500 flex items-center gap-1">
-              <AlertCircle className="h-3 w-3" />
-              {errors.price}
-            </p>
-          )}
+          <label className="text-sm font-medium">Price</label>
+          <Input
+            type="number"
+            step={formData.currency === "SBTC" ? "0.00000001" : "0.000001"}
+            min="0"
+            name="price"
+            value={formData.price}
+            onChange={onInput}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Currency</label>
+          <Select
+            value={formData.currency}
+            onValueChange={(value) =>
+              setFormData((prev) => ({
+                ...prev,
+                currency: normalizeCurrency(value),
+              }))
+            }
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="STX">STX</SelectItem>
+              <SelectItem value="SBTC">sBTC</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
-      <Button className="w-full" disabled={isSubmitting} onClick={handleSubmit}>
-        {isSubmitting ? (
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      <Button className="w-full" disabled={submitting} onClick={() => void submit()}>
+        {submitting ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Listing...
+          </>
         ) : (
-          "Submit Prompt"
+          "List Prompt"
         )}
       </Button>
 
-      {error && (
-        <p className="text-sm text-red-500 flex items-center gap-1 mt-2">
+      {error ? (
+        <p className="text-sm text-red-500 flex items-center gap-1">
           <AlertCircle className="h-3 w-3" />
           {error}
         </p>
-      )}
-
-      {success && (
-        <p className="text-sm text-green-500 flex items-center gap-1 mt-2">
-          {success}
-        </p>
-      )}
+      ) : null}
+      {success ? <p className="text-sm text-green-500">{success}</p> : null}
     </div>
   );
 }
