@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import {
-  buildPaymentRequiredResponse,
+  buildPaymentRequiredResponseV1,
   buildPaymentRequirements,
   decodePaymentSignatureHeader,
   encodeX402Header,
@@ -71,7 +71,7 @@ export async function GET(
       }
     }
 
-    const paymentRequired = buildPaymentRequiredResponse({
+    const paymentRequired = buildPaymentRequiredResponseV1({
       resourceUrl: request.url,
       description: `Unlock premium content for "${prompt.title}"`,
       amountBaseUnits: prompt.price_base_units,

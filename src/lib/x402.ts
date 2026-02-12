@@ -72,6 +72,31 @@ export function buildPaymentRequiredResponse(params: {
   };
 }
 
+/**
+ * Build V1-format 402 Payment Required response for x402scan compatibility.
+ * V1 uses a flat structure with payment fields at the root level.
+ */
+export function buildPaymentRequiredResponseV1(params: {
+  resourceUrl: string;
+  description: string;
+  amountBaseUnits: string;
+  currency: Currency;
+  payTo: string;
+}): Record<string, unknown> {
+  return {
+    x402Version: 1,
+    resource: params.resourceUrl, // V1: string URL, not object
+    scheme: "exact",
+    network: getStacksNetworkForRegistration(), // "stacks"
+    maxAmountRequired: params.amountBaseUnits, // V1: at root level
+    asset: resolveX402Asset(params.currency),
+    payTo: params.payTo, // V1: at root level
+    description: params.description,
+    mimeType: "application/json",
+    maxTimeoutSeconds: 300,
+  };
+}
+
 export function encodeX402Header(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString("base64");
 }
