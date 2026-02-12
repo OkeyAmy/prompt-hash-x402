@@ -83,17 +83,22 @@ export function buildPaymentRequiredResponseV1(params: {
   currency: Currency;
   payTo: string;
 }): Record<string, unknown> {
+  const maxTimeoutSeconds = 300;
+  const amountNum = Number(params.amountBaseUnits) || 0;
+
   return {
     x402Version: 1,
     resource: params.resourceUrl, // V1: string URL, not object
     scheme: "exact",
     network: getStacksNetworkForRegistration(), // "stacks"
-    maxAmountRequired: params.amountBaseUnits, // V1: at root level
+    maxAmountRequired: amountNum, // x402scan expects number type
     asset: resolveX402Asset(params.currency),
-    payTo: params.payTo, // V1: at root level
+    payTo: params.payTo,
     description: params.description,
     mimeType: "application/json",
-    maxTimeoutSeconds: 300,
+    maxTimeoutSeconds,
+    nonce: crypto.randomUUID(), // Replay protection
+    expiresAt: new Date(Date.now() + maxTimeoutSeconds * 1000).toISOString(),
   };
 }
 
