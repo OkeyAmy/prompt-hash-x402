@@ -17,6 +17,10 @@ export async function GET() {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   const network = getStacksNetworkForRegistration(); // x402scan requires "stacks" not CAIP-2
 
+  // NOTE: For x402scan compatibility:
+  // - maxAmountRequired: Representative maximum (actual prices vary per prompt)
+  // - payTo: Placeholder (actual recipient varies per prompt, specified in 402 response)
+  // - Actual payment details are in the HTTP 402 response when accessing /api/prompts/{id}/content
   const schema = {
     x402Version: 2,
     name: "PromptHash - AI-Native Prompt Marketplace",
@@ -27,12 +31,14 @@ export async function GET() {
       {
         scheme: "exact",
         network,
+        maxAmountRequired: "10000000", // 10 STX max (representative value for variable pricing)
         resource: `${appUrl}/api/prompts/{id}/content`,
         description:
-          "Purchase and access prompt content. Price varies per prompt (typically 0.0001-10 STX). First-time purchase required; subsequent access is free for buyers and sellers.",
+          "Purchase and access prompt content. Price varies per prompt (typically 0.0001-10 STX) - see individual prompt for exact amount. Payment goes directly to prompt seller. First-time purchase required; subsequent access is free for buyers and sellers.",
         mimeType: "application/json",
-        asset: "STX",
+        payTo: "VARIES_BY_PROMPT", // Actual seller wallet varies per prompt
         maxTimeoutSeconds: 300,
+        asset: "STX",
         workflow: {
           step1: "Browse available prompts: GET /api/prompts",
           step2: "Select a prompt and note its 'id' field",
