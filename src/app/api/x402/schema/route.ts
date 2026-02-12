@@ -7,6 +7,11 @@ import { getStacksNetworkForRegistration } from "@/lib/x402";
  * to discover and use the PromptHash marketplace programmatically.
  * 
  * Register at: https://scan.stacksx402.com
+ * 
+ * IMPORTANT: 
+ * - The {id} placeholder in resource URLs must be replaced with actual UUIDs
+ * - Browse /api/prompts first to get valid prompt IDs
+ * - Example working ID: 7de680e1-6cea-4967-903b-7b28c3387885
  */
 export async function GET() {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
@@ -28,6 +33,13 @@ export async function GET() {
         mimeType: "application/json",
         asset: "STX",
         maxTimeoutSeconds: 300,
+        workflow: {
+          step1: "Browse available prompts: GET /api/prompts",
+          step2: "Select a prompt and note its 'id' field",
+          step3: "Purchase content: GET /api/prompts/{id}/content (replace {id} with actual UUID)",
+          step4: "Wallet will prompt for payment in STX",
+          step5: "After payment, content is unlocked and accessible anytime"
+        },
         outputSchema: {
           input: {
             type: "request",
@@ -39,7 +51,7 @@ export async function GET() {
                 description:
                   "Prompt UUID obtained from GET /api/prompts (browse endpoint)",
                 required: true,
-                example: "550e8400-e29b-41d4-a716-446655440000",
+                example: "7de680e1-6cea-4967-903b-7b28c3387885",
               },
             },
             headers: {
@@ -102,6 +114,29 @@ export async function GET() {
             },
             required: ["content", "payment"],
           },
+        },
+        examples: {
+          browse: {
+            request: `GET ${appUrl}/api/prompts`,
+            description: "Get list of all available prompts",
+            response_sample: {
+              prompts: [
+                {
+                  id: "7de680e1-6cea-4967-903b-7b28c3387885",
+                  title: "Example Prompt",
+                  price_base_units: "100000",
+                  currency: "STX"
+                }
+              ]
+            }
+          },
+          purchase: {
+            request: `GET ${appUrl}/api/prompts/7de680e1-6cea-4967-903b-7b28c3387885/content`,
+            headers: {
+              "payment-signature": "Base64-encoded signed transaction (added automatically by x402 client)"
+            },
+            description: "Purchase and unlock prompt content"
+          }
         },
       },
     ],

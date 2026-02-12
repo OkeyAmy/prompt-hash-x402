@@ -45,6 +45,33 @@ PromptHash is a decentralized prompt marketplace built on the Stacks blockchain.
 - **Governance**: Community governance features
 - **Responsive Design**: Works on mobile and desktop
 
+## 🔌 Using the API
+
+### For Buyers
+
+1. **Browse Prompts** (no wallet needed):
+   ```bash
+   curl https://prompt-hash-x402.vercel.app/api/prompts
+   ```
+
+2. **Purchase Prompt** (requires Stacks wallet):
+   - Copy a prompt `id` from step 1
+   - Use the x402-stacks client library (see `API_TESTING_GUIDE.md`)
+   - Or visit the web UI at https://prompt-hash-x402.vercel.app/browse
+
+3. **Re-access Purchased Content** (free):
+   - Once purchased, access anytime without additional payment
+   - Include your wallet address in `x-buyer-wallet` header
+
+### For AI Agents
+
+1. Discover marketplace: https://scan.stacksx402.com
+2. Read API schema: https://prompt-hash-x402.vercel.app/api/x402/schema  
+3. Browse prompts: https://prompt-hash-x402.vercel.app/api/prompts
+4. Purchase with x402 payment protocol automatically
+
+See [API_TESTING_GUIDE.md](API_TESTING_GUIDE.md) for detailed examples and working prompt IDs.
+
 ## 🔧 Prerequisites
 
 Before you begin, ensure you have:
