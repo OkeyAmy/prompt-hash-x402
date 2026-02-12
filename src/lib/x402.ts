@@ -36,14 +36,16 @@ export function buildPaymentRequirements(params: {
   currency: Currency;
   payTo: string;
 }): PaymentRequirementsV2 {
+  // x402scan compatibility: include both V2 standard fields and x402scan-expected fields
   return {
     scheme: "exact",
-    network: getStacksNetworkCAIP2(),
+    network: getStacksNetworkForRegistration(), // "stacks" for x402scan compatibility
     amount: params.amountBaseUnits,
+    maxAmountRequired: params.amountBaseUnits, // x402scan expects this field
     asset: resolveX402Asset(params.currency),
     payTo: params.payTo,
     maxTimeoutSeconds: 300,
-  };
+  } as any; // TypeScript workaround for extra fields
 }
 
 export function buildPaymentRequiredResponse(params: {
