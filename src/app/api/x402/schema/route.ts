@@ -1,16 +1,139 @@
 import { NextResponse } from "next/server";
-import { getStacksNetworkCAIP2 } from "@/lib/x402";
+import { getStacksNetworkForRegistration } from "@/lib/x402";
+import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { PROMPT_METADATA_SELECT } from "@/lib/marketplace";
 
 /**
  * x402scan registration endpoint
  * This endpoint provides machine-readable documentation for AI agents
  * to discover and use the PromptHash marketplace programmatically.
- * 
+ *
  * Register at: https://scan.stacksx402.com
+ *
+ * IMPORTANT: x402scan "Try Request" uses the resource URL literally.
+ * We dynamically fetch prompts from the database and create one resource
+ * per prompt with CONCRETE URLs (no {id} placeholder) so Try Request works.
  */
+const DEFAULT_OUTPUT_SCHEMA = {
+  input: {
+    type: "request" as const,
+    method: "GET" as const,
+    headers: {
+      "x-buyer-wallet": {
+        type: "string",
+        description:
+          "Buyer's Stacks wallet address (optional - enables free access for prior purchases)",
+        required: false,
+        example: "ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM",
+      },
+      "payment-signature": {
+        type: "string",
+        format: "base64",
+        description:
+          "Base64-encoded signed x402 payment transaction (automatically added by x402 client libraries)",
+        required: true,
+      },
+    },
+  },
+  output: {
+    type: "object",
+    properties: {
+      content: {
+        type: "string",
+        description: "The actual prompt text content unlocked after payment",
+      },
+      payment: {
+        type: "object",
+        description: "Payment confirmation details",
+        properties: {
+          success: { type: "boolean", description: "Whether payment was successful" },
+          transaction: {
+            type: "string",
+            description: "Stacks blockchain transaction hash (0x-prefixed)",
+            example: "0xabcdef1234567890...",
+          },
+          payer: {
+            type: "string",
+            description: "Buyer's Stacks wallet address",
+            example: "ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM",
+          },
+          network: {
+            type: "string",
+            description: "CAIP-2 network identifier",
+            example: "stacks:2147483648",
+          },
+          bypass: {
+            type: "string",
+            description: "Reason for bypassing payment (if applicable)",
+            enum: ["seller", "existing_purchase"],
+          },
+        },
+      },
+    },
+    required: ["content", "payment"],
+  },
+};
+
 export async function GET() {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  const network = getStacksNetworkCAIP2();
+  const network = getStacksNetworkForRegistration(); // x402scan requires "stacks" not CAIP-2
+
+  let accepts: Array<{
+    scheme: "exact";
+    network: string;
+    maxAmountRequired: string;
+    resource: string;
+    description: string;
+    mimeType: string;
+    payTo: string;
+    maxTimeoutSeconds: number;
+    asset: string;
+    outputSchema: typeof DEFAULT_OUTPUT_SCHEMA;
+  }> = [];
+
+  try {
+    const supabase = getSupabaseServiceClient();
+    const { data: prompts, error } = await supabase
+      .from("prompts")
+      .select(PROMPT_METADATA_SELECT)
+      .eq("is_listed", true)
+      .order("created_at", { ascending: false });
+
+    if (!error && prompts && prompts.length > 0) {
+      accepts = prompts.map((prompt) => ({
+        scheme: "exact" as const,
+        network,
+        maxAmountRequired: String(prompt.price_base_units),
+        resource: `${appUrl}/api/prompts/${prompt.id}/content`,
+        description: `Purchase "${prompt.title}" - ${prompt.description?.slice(0, 80) ?? "Premium prompt content"}...`,
+        mimeType: "application/json",
+        payTo: prompt.seller_wallet,
+        maxTimeoutSeconds: 300,
+        asset: prompt.currency === "SBTC" ? "sBTC" : "STX",
+        outputSchema: DEFAULT_OUTPUT_SCHEMA,
+      }));
+    }
+  } catch {
+    // Fall through to fallback
+  }
+
+  if (accepts.length === 0) {
+    accepts = [
+      {
+        scheme: "exact" as const,
+        network,
+        maxAmountRequired: "100000",
+        resource: `${appUrl}/api/prompts/7de680e1-6cea-4967-903b-7b28c3387885/content`,
+        description:
+          "Purchase prompt content. Browse GET /api/prompts for all available prompts. First-time purchase required; subsequent access is free.",
+        mimeType: "application/json",
+        payTo: "ST16K4ZYM14WPG9GZQ5BPXNQAEVTJPRMA4VWJCXYY",
+        maxTimeoutSeconds: 300,
+        asset: "STX",
+        outputSchema: DEFAULT_OUTPUT_SCHEMA,
+      },
+    ];
+  }
 
   const schema = {
     x402Version: 2,
@@ -161,7 +284,7 @@ export async function GET() {
   return NextResponse.json(schema, {
     headers: {
       "Content-Type": "application/json",
-      "Cache-Control": "public, max-age=3600", // Cache for 1 hour
+      "Cache-Control": "public, max-age=60", // 1 min - schema is dynamic (fetches prompts from DB)
     },
   });
 }

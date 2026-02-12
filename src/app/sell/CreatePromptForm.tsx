@@ -96,26 +96,16 @@ export function CreatePromptForm() {
 
         // Request listing fee payment (0.001 STX = 1000 microSTX)
         try {
-          const feePaymentResponse = await requestWallet("stx_transferStx", {
+          const { request } = await import("@stacks/connect");
+
+          const feePaymentResponse = await request("stx_transferStx", {
+            amount: "1000", // microSTX
             recipient: platformWallet,
-            amount: "1000",
             memo: `Listing: ${formData.title.slice(0, 30)}`,
+            network: process.env.NEXT_PUBLIC_STACKS_NETWORK === "mainnet" ? "mainnet" : "testnet",
           });
 
-          // Extract transaction hash
-          const extractTxHash = (response: unknown): string | null => {
-            const res = response as Record<string, any>;
-            return (
-              res?.txId ||
-              res?.txid ||
-              res?.tx_id ||
-              res?.txHash ||
-              res?.result?.txId ||
-              null
-            );
-          };
-
-          listingFeeTx = extractTxHash(feePaymentResponse);
+          listingFeeTx = extractTransactionHash(feePaymentResponse);
           if (!listingFeeTx) {
             throw new Error("Failed to get listing fee transaction hash");
           }

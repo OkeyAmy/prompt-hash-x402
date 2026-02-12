@@ -137,6 +137,8 @@ export async function GET(
       return paymentRequiredResponse({ paymentRequired });
     }
 
+    console.log("🔍 [Content API] Payment signature header received, length:", paymentSignatureHeader.length);
+
     const paymentPayload = decodePaymentSignatureHeader(paymentSignatureHeader);
     if (!paymentPayload) {
       console.warn("[x402] invalid payment-signature header", {
@@ -149,13 +151,24 @@ export async function GET(
       );
     }
 
-    const paymentRequirements = buildPaymentRequirements({
+      x402Version: paymentPayload.x402Version,
+      hasAccepted: !!paymentPayload.accepted,
+      hasPayload: !!paymentPayload.payload,
+      txLength: paymentPayload.payload?.transaction?.length,
       amountBaseUnits: prompt.price_base_units,
       currency,
       payTo: prompt.seller_wallet,
     });
 
+    console.log("🔍 [Content API] Calling facilitator settle...");
     const settlement = await settlePayment(paymentPayload, paymentRequirements);
+    console.log("📊 [Content API] Settlement response:", {
+      success: settlement.success,
+      errorReason: settlement.errorReason,
+      payer: settlement.payer,
+      transaction: settlement.transaction,
+    });
+
     if (!settlement.success) {
       console.warn("[x402] payment settlement failed", {
         promptId: prompt.id,

@@ -8,6 +8,16 @@ import { Button } from "@/components/ui/button";
 import { shortenAddress } from "@/lib/utils";
 import { formatBaseUnits, type PromptMetadata } from "@/lib/marketplace";
 import { useStacksWallet } from "@/components/stacks-wallet-provider";
+import { X402PaymentVerifier, getNetworkInstance } from "x402-stacks";
+import {
+  makeUnsignedSTXTokenTransfer,
+  AnchorMode,
+} from "@stacks/transactions";
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 type PaymentRequiredV2 = {
   x402Version: 2;
@@ -22,7 +32,7 @@ type PaymentRequiredV2 = {
     amount: string;
     asset: string;
     payTo: string;
-    maxTimeoutSeconds: number;
+    maxTimeoutSeconds?: number;
   }>;
 };
 
@@ -32,74 +42,42 @@ type PromptModalProps = {
 };
 
 function extractSignedTransaction(payload: unknown): string | null {
-  const value = payload as Record<string, any>;
+  const value = payload as Record<string, unknown>;
   if (!value) return null;
-  return (
-    value.transaction ||
-    value.txHex ||
-    value.tx ||
-    value.signedTx ||
-    value.signedTransaction ||
-    value.result?.transaction ||
-    value.result?.txHex ||
-    null
-  );
+  const tx =
+    value.transaction ??
+    (value as { result?: { transaction?: string } }).result?.transaction;
+  if (typeof tx === "string" && tx.length > 0) {
+    return tx.replace(/^0x/i, "");
+  }
+  return null;
 }
 
-async function createWalletPaymentPayload(
-  paymentRequired: PaymentRequiredV2,
-  requestWallet: (
-    method: string,
-    params?: Record<string, unknown>,
-  ) => Promise<unknown>,
-) {
-  const accepted = paymentRequired.accepts[0];
-  if (!accepted) throw new Error("No acceptable payment option provided");
-
-  const attempts: Array<{ method: string; params: Record<string, unknown> }> = [
-    {
-      method: "x402_signTransaction",
-      params: {
-        paymentRequirement: accepted,
-        resource: paymentRequired.resource,
-      },
-    },
-    {
-      method: "stx_signTransaction",
-      params: {
-        paymentRequirement: accepted,
-        resource: paymentRequired.resource,
-      },
-    },
-    {
-      method: "signTransaction",
-      params: {
-        paymentRequirement: accepted,
-        resource: paymentRequired.resource,
-      },
-    },
-  ];
-
-  for (const attempt of attempts) {
+async function getPublicKeyForAddress(
+  requestWallet: (method: string, params?: Record<string, unknown>) => Promise<unknown>,
+  walletAddress: string,
+  network: string,
+): Promise<string | null> {
+  for (const method of ["stx_getAccounts", "getAddresses", "stx_getAddresses"]) {
     try {
-      const response = await requestWallet(attempt.method, attempt.params);
-      const transaction = extractSignedTransaction(response);
-      if (transaction) {
-        return {
-          x402Version: 2 as const,
-          resource: paymentRequired.resource,
-          accepted,
-          payload: { transaction },
-        };
-      }
+      const result = (await requestWallet(method, { network })) as
+        | { accounts?: Array<{ address: string; publicKey?: string }> }
+        | { addresses?: Array<{ address: string; publicKey?: string }> };
+      const entries =
+        (result as { accounts?: Array<{ address: string; publicKey?: string }> }).accounts ??
+        (result as { addresses?: Array<{ address: string; publicKey?: string }> }).addresses ??
+        [];
+      const match = entries.find(
+        (e) =>
+          e.address?.toLowerCase() === walletAddress.toLowerCase() &&
+          typeof e.publicKey === "string",
+      );
+      if (match?.publicKey) return match.publicKey;
     } catch {
-      // Try next method.
+      // Try next method
     }
   }
-
-  throw new Error(
-    "Your wallet did not return a signed x402 transaction. Try a wallet/provider that supports x402 signing.",
-  );
+  return null;
 }
 
 export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
@@ -115,6 +93,10 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
       }`,
     [selectedPrompt.currency, selectedPrompt.price_base_units],
   );
+
+  const network =
+    process.env.NEXT_PUBLIC_STACKS_NETWORK === "mainnet" ? "mainnet" : "testnet";
+  const networkInstance = getNetworkInstance(network);
 
   const fetchPaidContent = async () => {
     setLoading(true);
@@ -148,8 +130,11 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
       }
 
       if (firstAttempt.status !== 402) {
-        const message = await firstAttempt.text();
-        throw new Error(message || "Failed to unlock prompt");
+        const errData = await firstAttempt.json().catch(() => ({}));
+        throw new Error(
+          (errData as { error?: string }).error ||
+            "Failed to unlock prompt",
+        );
       }
 
       const header = firstAttempt.headers.get("payment-required");
@@ -168,13 +153,90 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
         throw new Error("Invalid payment requirement payload");
       }
 
-      const paymentPayload = await createWalletPaymentPayload(
-        paymentRequired,
-        requestWallet,
-      );
+      const accepted = paymentRequired.accepts[0];
+      if (!accepted) {
+        throw new Error("No acceptable payment option");
+      }
 
-      const secondAttempt = await fetch(
-        `/api/prompts/${selectedPrompt.id}/content`,
+      console.log("📋 Payment required:", {
+        x402Version: paymentRequired.x402Version,
+        resource: paymentRequired.resource,
+        accepted: {
+          scheme: accepted.scheme,
+          network: accepted.network,
+          amount: accepted.amount,
+          asset: accepted.asset,
+          payTo: accepted.payTo,
+        },
+      });
+
+      // Only STX transfers supported for now
+      if (accepted.asset !== "STX") {
+        throw new Error(
+          `Payments in ${accepted.asset} are not yet supported in this flow.`,
+        );
+      }
+
+      const publicKey = await getPublicKeyForAddress(
+        requestWallet,
+        walletAddress,
+        network,
+      );
+      if (!publicKey) {
+        throw new Error(
+          "Could not get public key from wallet. Your wallet may not support x402 signing.",
+        );
+      }
+
+      const amount = BigInt(accepted.amount);
+      const memo = `x402:${Date.now().toString(36)}`.substring(0, 34);
+
+      console.log("🏗️ Creating unsigned transaction with:", {
+        recipient: accepted.payTo,
+        amount: amount.toString(),
+        publicKey: publicKey.substring(0, 20) + "...",
+        network: network,
+        memo,
+      });
+
+      const unsignedTx = await makeUnsignedSTXTokenTransfer({
+        recipient: accepted.payTo,
+        amount,
+        publicKey,
+        network: networkInstance,
+        memo,
+        anchorMode: AnchorMode.Any,
+      });
+      
+      console.log("✅ Unsigned transaction created");
+
+      const txHex = bytesToHex(unsignedTx.serialize());
+      console.log("🔐 Unsigned tx hex (first 20 chars):", txHex.substring(0, 20));
+      console.log("🔐 Unsigned tx length:", txHex.length);
+
+      console.log("🔐 Requesting wallet to sign...");
+      const signResult = await requestWallet("stx_signTransaction", {
+        transaction: txHex,
+        broadcast: false,
+      });
+      
+      console.log("📝 Wallet sign result:", JSON.stringify(signResult, null, 2));
+
+      const signedTxHex = extractSignedTransaction(signResult);
+      if (!signedTxHex) {
+        console.error("❌ Failed to extract signed tx from wallet result");
+        console.error("❌ Wallet result keys:", Object.keys(signResult as object));
+        throw new Error(
+          "Wallet did not return a signed transaction. Please try again.",
+        );
+      }
+
+      console.log("✅ Signed tx hex (full):", signedTxHex);
+      console.log("✅ Signed tx length:", signedTxHex.length);
+      console.log("✅ Accepted payment requirements:", accepted);
+
+      const paymentPayload = X402PaymentVerifier.createPaymentPayload(
+        signedTxHex,
         {
           method: "GET",
           headers: {
@@ -182,12 +244,23 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
             "x-prompthash-bypass": "allow",
             "payment-signature": btoa(JSON.stringify(paymentPayload)),
           },
+      ).toString("base64");
+      
+      console.log("✅ Encoded payload length:", encodedPayload.length);
+
+      const secondAttempt = await fetch(contentUrl, {
+        method: "GET",
+        headers: {
+          "x-buyer-wallet": walletAddress,
+          "payment-signature": encodedPayload,
         },
-      );
+      });
 
       if (!secondAttempt.ok) {
-        const message = await secondAttempt.text();
-        throw new Error(message || "Payment not accepted");
+        const errData = await secondAttempt.json().catch(() => ({}));
+        throw new Error(
+          (errData as { error?: string }).error || "Payment not accepted",
+        );
       }
 
       const data = (await secondAttempt.json()) as { content: string };
