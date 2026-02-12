@@ -283,7 +283,7 @@ After registering, you can verify by:
 ### If listing fee payment fails:
 
 1. **Check environment variables:**
-   ```bash
+```bash
    NEXT_PUBLIC_ENABLE_LISTING_FEE=true
    NEXT_PUBLIC_PLATFORM_WALLET=ST2YTR47XFNCEC1VHF7T38ZSBTG6B7VYP8VH882H5
    ```

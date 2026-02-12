@@ -31,21 +31,23 @@ export function resolveX402Asset(currency: Currency): string {
   );
 }
 
+/**
+ * Build PaymentRequirementsV2 for facilitator (uses CAIP-2 network).
+ * Use getStacksNetworkForRegistration() only for schema/x402scan.
+ */
 export function buildPaymentRequirements(params: {
   amountBaseUnits: string;
   currency: Currency;
   payTo: string;
 }): PaymentRequirementsV2 {
-  // x402scan compatibility: include both V2 standard fields and x402scan-expected fields
   return {
     scheme: "exact",
-    network: getStacksNetworkForRegistration(), // "stacks" for x402scan compatibility
+    network: getStacksNetworkCAIP2(), // CAIP-2 required for facilitator
     amount: params.amountBaseUnits,
-    maxAmountRequired: params.amountBaseUnits, // x402scan expects this field
     asset: resolveX402Asset(params.currency),
     payTo: params.payTo,
     maxTimeoutSeconds: 300,
-  } as any; // TypeScript workaround for extra fields
+  };
 }
 
 export function buildPaymentRequiredResponse(params: {
