@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getStacksNetworkCAIP2 } from "@/lib/x402";
+import { getStacksNetworkForRegistration } from "@/lib/x402";
 
 /**
  * x402scan registration endpoint
@@ -10,7 +10,7 @@ import { getStacksNetworkCAIP2 } from "@/lib/x402";
  */
 export async function GET() {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  const network = getStacksNetworkCAIP2();
+  const network = getStacksNetworkForRegistration(); // x402scan requires "stacks" not CAIP-2
 
   const schema = {
     x402Version: 2,

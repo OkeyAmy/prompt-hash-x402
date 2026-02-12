@@ -18,6 +18,11 @@ export function getStacksNetworkCAIP2() {
   return networkToCAIP2(getStacksNetwork());
 }
 
+export function getStacksNetworkForRegistration(): "stacks" {
+  // x402scan requires just "stacks" regardless of mainnet/testnet
+  return "stacks";
+}
+
 export function resolveX402Asset(currency: Currency): string {
   if (currency === "STX") return "STX";
   return (

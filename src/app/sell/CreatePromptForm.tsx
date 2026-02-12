@@ -96,26 +96,20 @@ export function CreatePromptForm() {
 
         // Request listing fee payment (0.001 STX = 1000 microSTX)
         try {
-          const feePaymentResponse = await requestWallet("stx_transferStx", {
-            recipient: platformWallet,
-            amount: "1000",
-            memo: `Listing: ${formData.title.slice(0, 30)}`,
+          const { openSTXTransfer } = await import("@stacks/connect");
+          
+          const feePaymentResponse = await new Promise((resolve, reject) => {
+            openSTXTransfer({
+              recipient: platformWallet,
+              amount: "1000", // microSTX
+              memo: `Listing: ${formData.title.slice(0, 30)}`,
+              network: process.env.NEXT_PUBLIC_STACKS_NETWORK === "mainnet" ? "mainnet" : "testnet",
+              onFinish: (data) => resolve(data),
+              onCancel: () => reject(new Error("Listing fee payment cancelled")),
+            });
           });
 
-          // Extract transaction hash
-          const extractTxHash = (response: unknown): string | null => {
-            const res = response as Record<string, any>;
-            return (
-              res?.txId ||
-              res?.txid ||
-              res?.tx_id ||
-              res?.txHash ||
-              res?.result?.txId ||
-              null
-            );
-          };
-
-          listingFeeTx = extractTxHash(feePaymentResponse);
+          listingFeeTx = extractTransactionHash(feePaymentResponse);
           if (!listingFeeTx) {
             throw new Error("Failed to get listing fee transaction hash");
           }

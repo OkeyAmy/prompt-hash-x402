@@ -15,10 +15,14 @@ export function extractTransactionHash(payload: unknown): string | null {
   const paths = [
     value.txId,
     value.txid,
+    value.tx_id,
+    value.txHash,
     value.transaction,
     value.result?.txId,
     value.result?.txid,
     value.result?.transaction,
+    value.data?.txId, // Added for openSTXTransfer
+    value.data?.transaction, // Added for openSTXTransfer
   ];
 
   for (const path of paths) {
