@@ -153,6 +153,18 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
         throw new Error("No acceptable payment option");
       }
 
+      console.log("📋 Payment required:", {
+        x402Version: paymentRequired.x402Version,
+        resource: paymentRequired.resource,
+        accepted: {
+          scheme: accepted.scheme,
+          network: accepted.network,
+          amount: accepted.amount,
+          asset: accepted.asset,
+          payTo: accepted.payTo,
+        },
+      });
+
       // Only STX transfers supported for now
       if (accepted.asset !== "STX") {
         throw new Error(
@@ -174,6 +186,14 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
       const amount = BigInt(accepted.amount);
       const memo = `x402:${Date.now().toString(36)}`.substring(0, 34);
 
+      console.log("🏗️ Creating unsigned transaction with:", {
+        recipient: accepted.payTo,
+        amount: amount.toString(),
+        publicKey: publicKey.substring(0, 20) + "...",
+        network: network,
+        memo,
+      });
+
       const unsignedTx = await makeUnsignedSTXTokenTransfer({
         recipient: accepted.payTo,
         amount,
@@ -182,20 +202,33 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
         memo,
         anchorMode: AnchorMode.Any,
       });
+      
+      console.log("✅ Unsigned transaction created");
 
       const txHex = bytesToHex(unsignedTx.serialize());
+      console.log("🔐 Unsigned tx hex (first 20 chars):", txHex.substring(0, 20));
+      console.log("🔐 Unsigned tx length:", txHex.length);
 
+      console.log("🔐 Requesting wallet to sign...");
       const signResult = await requestWallet("stx_signTransaction", {
         transaction: txHex,
         broadcast: false,
       });
+      
+      console.log("📝 Wallet sign result:", JSON.stringify(signResult, null, 2));
 
       const signedTxHex = extractSignedTransaction(signResult);
       if (!signedTxHex) {
+        console.error("❌ Failed to extract signed tx from wallet result");
+        console.error("❌ Wallet result keys:", Object.keys(signResult as object));
         throw new Error(
           "Wallet did not return a signed transaction. Please try again.",
         );
       }
+
+      console.log("✅ Signed tx hex (full):", signedTxHex);
+      console.log("✅ Signed tx length:", signedTxHex.length);
+      console.log("✅ Accepted payment requirements:", accepted);
 
       const paymentPayload = X402PaymentVerifier.createPaymentPayload(
         signedTxHex,
@@ -209,9 +242,14 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
         },
       );
 
+      console.log("✅ Payment payload created:");
+      console.log(JSON.stringify(paymentPayload, null, 2));
+
       const encodedPayload = Buffer.from(
         JSON.stringify(paymentPayload),
       ).toString("base64");
+      
+      console.log("✅ Encoded payload length:", encodedPayload.length);
 
       const secondAttempt = await fetch(contentUrl, {
         method: "GET",

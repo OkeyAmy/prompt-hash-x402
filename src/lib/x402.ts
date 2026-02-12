@@ -43,7 +43,7 @@ export function buildPaymentRequirements(params: {
   return {
     scheme: "exact",
     network: getStacksNetworkCAIP2(), // CAIP-2 required for facilitator
-    amount: params.amountBaseUnits,
+    amount: String(params.amountBaseUnits),
     asset: resolveX402Asset(params.currency),
     payTo: params.payTo,
     maxTimeoutSeconds: 300,
@@ -124,8 +124,28 @@ export async function settlePayment(
   paymentPayload: PaymentPayloadV2,
   paymentRequirements: PaymentRequirementsV2,
 ) {
-  const verifier = new X402PaymentVerifier(
-    process.env.FACILITATOR_URL || "https://facilitator.stacksx402.com",
-  );
-  return verifier.settle(paymentPayload, { paymentRequirements });
+  console.log("🚀 [settlePayment] Calling facilitator...");
+  console.log("📦 [settlePayment] Payment payload:", {
+    x402Version: paymentPayload.x402Version,
+    accepted: paymentPayload.accepted,
+    payload: {
+      transaction: paymentPayload.payload?.transaction?.substring(0, 40) + "...",
+      transactionLength: paymentPayload.payload?.transaction?.length,
+      broadcastOnSettle: (paymentPayload.payload as any)?.broadcastOnSettle,
+    },
+  });
+  console.log("📋 [settlePayment] Payment requirements:", paymentRequirements);
+
+  const facilitatorUrl = process.env.FACILITATOR_URL || "https://facilitator.stacksx402.com";
+  console.log("🌐 [settlePayment] Facilitator URL:", facilitatorUrl);
+
+  const verifier = new X402PaymentVerifier(facilitatorUrl);
+
+  console.time("⏱️ [settlePayment] Facilitator duration");
+  const result = await verifier.settle(paymentPayload, { paymentRequirements });
+  console.timeEnd("⏱️ [settlePayment] Facilitator duration");
+
+  console.log("📊 [settlePayment] Facilitator raw response:", JSON.stringify(result, null, 2));
+
+  return result;
 }

@@ -71,10 +71,13 @@ export async function GET(
       }
     }
 
+    // Supabase returns numeric columns as JS numbers; coerce to string for x402
+    const priceBaseUnits = String(prompt.price_base_units);
+
     const paymentRequired = buildPaymentRequiredResponse({
       resourceUrl: request.url,
       description: `Unlock premium content for "${prompt.title}"`,
-      amountBaseUnits: prompt.price_base_units,
+      amountBaseUnits: priceBaseUnits,
       currency: normalizeCurrency(prompt.currency),
       payTo: prompt.seller_wallet,
     });
@@ -91,21 +94,39 @@ export async function GET(
       return response;
     }
 
+    console.log("🔍 [Content API] Payment signature header received, length:", paymentSignatureHeader.length);
+
     const paymentPayload = decodePaymentSignatureHeader(paymentSignatureHeader);
     if (!paymentPayload) {
+      console.error("❌ [Content API] Failed to decode payment signature");
       return NextResponse.json(
         { error: "Invalid payment-signature header" },
         { status: 400 },
       );
     }
 
+    console.log("✅ [Content API] Payment payload decoded:", {
+      x402Version: paymentPayload.x402Version,
+      hasAccepted: !!paymentPayload.accepted,
+      hasPayload: !!paymentPayload.payload,
+      txLength: paymentPayload.payload?.transaction?.length,
+    });
+
     const paymentRequirements = buildPaymentRequirements({
-      amountBaseUnits: prompt.price_base_units,
+      amountBaseUnits: priceBaseUnits,
       currency: normalizeCurrency(prompt.currency),
       payTo: prompt.seller_wallet,
     });
 
+    console.log("🔍 [Content API] Calling facilitator settle...");
     const settlement = await settlePayment(paymentPayload, paymentRequirements);
+    console.log("📊 [Content API] Settlement response:", {
+      success: settlement.success,
+      errorReason: settlement.errorReason,
+      payer: settlement.payer,
+      transaction: settlement.transaction,
+    });
+
     if (!settlement.success) {
       const response = NextResponse.json(
         {
@@ -126,7 +147,7 @@ export async function GET(
       prompt_id: prompt.id,
       buyer_wallet: settlement.payer || buyerWallet || "unknown",
       currency: normalizeCurrency(prompt.currency),
-      amount_base_units: prompt.price_base_units,
+      amount_base_units: priceBaseUnits,
       payment_tx: settlement.transaction || null,
     });
 
