@@ -1,12 +1,16 @@
 import {
   X402PaymentVerifier,
   X402_HEADERS,
+  isValidStacksAddress,
   networkToCAIP2,
   type PaymentPayloadV2,
   type PaymentRequiredV2,
   type PaymentRequirementsV2,
 } from "x402-stacks";
-import type { Currency } from "@/lib/marketplace";
+import {
+  parseDisplayAmountToBaseUnits,
+  type Currency,
+} from "@/lib/marketplace";
 
 export { X402_HEADERS };
 
@@ -26,17 +30,54 @@ export function resolveX402Asset(currency: Currency): string {
   );
 }
 
+const POSITIVE_INTEGER_PATTERN = /^[1-9]\d*$/;
+const DECIMAL_PATTERN = /^\d+\.\d+$/;
+const STACKS_CAIP2_PATTERN = /^stacks:\d+$/;
+
+function normalizePositiveIntegerString(value: string): string {
+  const normalized = value.replace(/^0+(?=\d)/, "");
+  if (!POSITIVE_INTEGER_PATTERN.test(normalized)) {
+    throw new Error("x402 amount must be a positive integer string in base units");
+  }
+  return normalized;
+}
+
+function normalizeAmountBaseUnits(rawAmount: string, currency: Currency): string {
+  const value = String(rawAmount ?? "").trim();
+  if (!value) {
+    throw new Error("x402 amount is required");
+  }
+
+  if (DECIMAL_PATTERN.test(value)) {
+    return normalizePositiveIntegerString(
+      parseDisplayAmountToBaseUnits(value, currency),
+    );
+  }
+
+  return normalizePositiveIntegerString(value);
+}
+
 export function buildPaymentRequirements(params: {
   amountBaseUnits: string;
   currency: Currency;
   payTo: string;
 }): PaymentRequirementsV2 {
+  const network = getStacksNetworkCAIP2();
+  if (!STACKS_CAIP2_PATTERN.test(network)) {
+    throw new Error(`Invalid Stacks CAIP-2 network: ${network}`);
+  }
+
+  const payTo = params.payTo.trim();
+  if (!isValidStacksAddress(payTo)) {
+    throw new Error(`Invalid payTo Stacks address: ${payTo}`);
+  }
+
   return {
     scheme: "exact",
-    network: getStacksNetworkCAIP2(),
-    amount: params.amountBaseUnits,
+    network,
+    amount: normalizeAmountBaseUnits(params.amountBaseUnits, params.currency),
     asset: resolveX402Asset(params.currency),
-    payTo: params.payTo,
+    payTo,
     maxTimeoutSeconds: 300,
   };
 }
@@ -48,10 +89,16 @@ export function buildPaymentRequiredResponse(params: {
   currency: Currency;
   payTo: string;
 }): PaymentRequiredV2 {
+  const resourceUrl = params.resourceUrl.trim();
+  if (!resourceUrl) {
+    throw new Error("x402 resource URL is required");
+  }
+
   return {
     x402Version: 2,
+    error: "Payment required",
     resource: {
-      url: params.resourceUrl,
+      url: resourceUrl,
       description: params.description,
       mimeType: "application/json",
     },

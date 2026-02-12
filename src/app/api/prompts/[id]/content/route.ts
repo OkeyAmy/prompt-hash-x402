@@ -14,6 +14,39 @@ function sanitizeWallet(value: string | null | undefined): string {
   return (value || "").trim();
 }
 
+const BYPASS_HEADER = "x-prompthash-bypass";
+const BYPASS_HEADER_VALUE = "allow";
+
+function allowFreeBypass(request: NextRequest): boolean {
+  return (
+    sanitizeWallet(request.headers.get(BYPASS_HEADER)).toLowerCase() ===
+    BYPASS_HEADER_VALUE
+  );
+}
+
+function setX402ResponseHeaders(response: NextResponse) {
+  response.headers.set("Cache-Control", "no-store");
+  response.headers.set(
+    "Vary",
+    `${X402_HEADERS.PAYMENT_SIGNATURE}, x-buyer-wallet, ${BYPASS_HEADER}`,
+  );
+}
+
+function paymentRequiredResponse(params: {
+  paymentRequired: ReturnType<typeof buildPaymentRequiredResponse>;
+  body?: unknown;
+}) {
+  const response = NextResponse.json(params.body ?? params.paymentRequired, {
+    status: 402,
+  });
+  response.headers.set(
+    X402_HEADERS.PAYMENT_REQUIRED,
+    encodeX402Header(params.paymentRequired),
+  );
+  setX402ResponseHeaders(response);
+  return response;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -35,16 +68,30 @@ export async function GET(
     }
 
     const buyerWallet = sanitizeWallet(request.headers.get("x-buyer-wallet"));
+    const bypassEnabled = allowFreeBypass(request);
+    const currency = normalizeCurrency(prompt.currency);
 
-    // Allow seller to read without paying.
+    const paymentRequired = buildPaymentRequiredResponse({
+      resourceUrl: request.url,
+      description: `Unlock premium content for "${prompt.title}"`,
+      amountBaseUnits: prompt.price_base_units,
+      currency,
+      payTo: prompt.seller_wallet,
+    });
+
+    // Optional first-party bypass path. This keeps marketplace UX for sellers
+    // and prior buyers while preserving strict 402 behavior for external callers.
     if (
+      bypassEnabled &&
       buyerWallet &&
       buyerWallet.toLowerCase() === prompt.seller_wallet.toLowerCase()
     ) {
-      return NextResponse.json({
+      const response = NextResponse.json({
         content: prompt.paid_content,
         payment: { bypass: "seller" },
       });
+      setX402ResponseHeaders(response);
+      return response;
     }
 
     if (!prompt.is_listed) {
@@ -54,7 +101,7 @@ export async function GET(
       );
     }
 
-    if (buyerWallet) {
+    if (bypassEnabled && buyerWallet) {
       const { data: existingPurchase } = await supabase
         .from("purchases")
         .select("id")
@@ -64,35 +111,38 @@ export async function GET(
         .maybeSingle();
 
       if (existingPurchase) {
-        return NextResponse.json({
+        const response = NextResponse.json({
           content: prompt.paid_content,
           payment: { bypass: "existing_purchase" },
         });
+        setX402ResponseHeaders(response);
+        return response;
       }
     }
-
-    const paymentRequired = buildPaymentRequiredResponse({
-      resourceUrl: request.url,
-      description: `Unlock premium content for "${prompt.title}"`,
-      amountBaseUnits: prompt.price_base_units,
-      currency: normalizeCurrency(prompt.currency),
-      payTo: prompt.seller_wallet,
-    });
 
     const paymentSignatureHeader = request.headers.get(
       X402_HEADERS.PAYMENT_SIGNATURE,
     );
     if (!paymentSignatureHeader) {
-      const response = NextResponse.json(paymentRequired, { status: 402 });
-      response.headers.set(
-        X402_HEADERS.PAYMENT_REQUIRED,
-        encodeX402Header(paymentRequired),
-      );
-      return response;
+      console.info("[x402] payment challenge generated", {
+        promptId: prompt.id,
+        network: paymentRequired.accepts[0]?.network,
+        asset: paymentRequired.accepts[0]?.asset,
+        amount: paymentRequired.accepts[0]?.amount,
+        payTo: paymentRequired.accepts[0]?.payTo,
+        buyerWallet: buyerWallet || null,
+        bypassEnabled,
+      });
+
+      return paymentRequiredResponse({ paymentRequired });
     }
 
     const paymentPayload = decodePaymentSignatureHeader(paymentSignatureHeader);
     if (!paymentPayload) {
+      console.warn("[x402] invalid payment-signature header", {
+        promptId: prompt.id,
+        buyerWallet: buyerWallet || null,
+      });
       return NextResponse.json(
         { error: "Invalid payment-signature header" },
         { status: 400 },
@@ -101,34 +151,44 @@ export async function GET(
 
     const paymentRequirements = buildPaymentRequirements({
       amountBaseUnits: prompt.price_base_units,
-      currency: normalizeCurrency(prompt.currency),
+      currency,
       payTo: prompt.seller_wallet,
     });
 
     const settlement = await settlePayment(paymentPayload, paymentRequirements);
     if (!settlement.success) {
-      const response = NextResponse.json(
-        {
+      console.warn("[x402] payment settlement failed", {
+        promptId: prompt.id,
+        payer: settlement.payer,
+        transaction: settlement.transaction,
+        reason: settlement.errorReason || "Payment settlement failed",
+      });
+
+      return paymentRequiredResponse({
+        paymentRequired,
+        body: {
           error: settlement.errorReason || "Payment settlement failed",
           transaction: settlement.transaction,
           payer: settlement.payer,
         },
-        { status: 402 },
-      );
-      response.headers.set(
-        X402_HEADERS.PAYMENT_REQUIRED,
-        encodeX402Header(paymentRequired),
-      );
-      return response;
+      });
     }
 
-    await supabase.from("purchases").insert({
+    const { error: purchaseError } = await supabase.from("purchases").insert({
       prompt_id: prompt.id,
       buyer_wallet: settlement.payer || buyerWallet || "unknown",
-      currency: normalizeCurrency(prompt.currency),
+      currency,
       amount_base_units: prompt.price_base_units,
       payment_tx: settlement.transaction || null,
     });
+    if (purchaseError) {
+      console.error("[x402] purchase record insert failed", {
+        promptId: prompt.id,
+        payer: settlement.payer,
+        transaction: settlement.transaction,
+        error: purchaseError.message,
+      });
+    }
 
     const response = NextResponse.json({
       content: prompt.paid_content,
@@ -139,6 +199,7 @@ export async function GET(
         network: settlement.network,
       },
     });
+    setX402ResponseHeaders(response);
 
     response.headers.set(
       X402_HEADERS.PAYMENT_RESPONSE,
@@ -152,6 +213,9 @@ export async function GET(
 
     return response;
   } catch (error) {
+    console.error("[x402] unexpected route failure", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to fetch content",

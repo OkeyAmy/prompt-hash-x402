@@ -46,16 +46,23 @@ export async function GET() {
               "x-buyer-wallet": {
                 type: "string",
                 description:
-                  "Buyer's Stacks wallet address (optional - enables free access for prior purchases)",
+                  "Buyer's Stacks wallet address (optional metadata for purchase attribution)",
                 required: false,
                 example: "ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM",
+              },
+              "x-prompthash-bypass": {
+                type: "string",
+                description:
+                  "Optional first-party bypass hint. Use value 'allow' only in PromptHash UI flows for seller or prior-purchase fast-paths.",
+                required: false,
+                example: "allow",
               },
               "payment-signature": {
                 type: "string",
                 format: "base64",
                 description:
-                  "Base64-encoded signed x402 payment transaction (automatically added by x402 client libraries)",
-                required: true,
+                  "Base64-encoded signed x402 payment transaction (include after receiving HTTP 402 challenge)",
+                required: false,
               },
             },
           },

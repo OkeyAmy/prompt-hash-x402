@@ -134,7 +134,10 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
         `/api/prompts/${selectedPrompt.id}/content`,
         {
           method: "GET",
-          headers: { "x-buyer-wallet": walletAddress },
+          headers: {
+            "x-buyer-wallet": walletAddress,
+            "x-prompthash-bypass": "allow",
+          },
         },
       );
 
@@ -176,6 +179,7 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
           method: "GET",
           headers: {
             "x-buyer-wallet": walletAddress,
+            "x-prompthash-bypass": "allow",
             "payment-signature": btoa(JSON.stringify(paymentPayload)),
           },
         },

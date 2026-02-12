@@ -80,6 +80,7 @@ export default function MyPurchases({ onViewContent }: MyPurchasesProps) {
         method: "GET",
         headers: {
           "x-buyer-wallet": address,
+          "x-prompthash-bypass": "allow",
         },
       });
 
