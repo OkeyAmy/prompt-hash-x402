@@ -151,10 +151,14 @@ export async function GET(
       );
     }
 
+    console.log("🔍 [Content API] Header payload check:", {
       x402Version: paymentPayload.x402Version,
       hasAccepted: !!paymentPayload.accepted,
       hasPayload: !!paymentPayload.payload,
       txLength: paymentPayload.payload?.transaction?.length,
+    });
+
+    const paymentRequirements = buildPaymentRequirements({
       amountBaseUnits: prompt.price_base_units,
       currency,
       payTo: prompt.seller_wallet,
