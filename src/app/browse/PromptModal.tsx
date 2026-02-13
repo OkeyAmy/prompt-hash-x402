@@ -88,8 +88,7 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
 
   const displayPrice = useMemo(
     () =>
-      `${formatBaseUnits(selectedPrompt.price_base_units, selectedPrompt.currency)} ${
-        selectedPrompt.currency
+      `${formatBaseUnits(selectedPrompt.price_base_units, selectedPrompt.currency)} ${selectedPrompt.currency
       }`,
     [selectedPrompt.currency, selectedPrompt.price_base_units],
   );
@@ -133,7 +132,7 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
         const errData = await firstAttempt.json().catch(() => ({}));
         throw new Error(
           (errData as { error?: string }).error ||
-            "Failed to unlock prompt",
+          "Failed to unlock prompt",
         );
       }
 
@@ -207,7 +206,7 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
         memo,
         anchorMode: AnchorMode.Any,
       });
-      
+
       console.log("✅ Unsigned transaction created");
 
       const txHex = bytesToHex(unsignedTx.serialize());
@@ -219,7 +218,7 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
         transaction: txHex,
         broadcast: false,
       });
-      
+
       console.log("📝 Wallet sign result:", JSON.stringify(signResult, null, 2));
 
       const signedTxHex = extractSignedTransaction(signResult);
@@ -237,18 +236,14 @@ export function PromptModal({ selectedPrompt, closeModal }: PromptModalProps) {
 
       const paymentPayload = X402PaymentVerifier.createPaymentPayload(
         signedTxHex,
-        {
-          method: "GET",
-          headers: {
-            "x-buyer-wallet": walletAddress,
-            "x-prompthash-bypass": "allow",
-            "payment-signature": btoa(JSON.stringify(paymentPayload)),
-          },
-      ).toString("base64");
-      
+        accepted
+      );
+
+      const encodedPayload = btoa(JSON.stringify(paymentPayload));
+
       console.log("✅ Encoded payload length:", encodedPayload.length);
 
-      const secondAttempt = await fetch(contentUrl, {
+      const secondAttempt = await fetch(`/api/prompts/${selectedPrompt.id}/content`, {
         method: "GET",
         headers: {
           "x-buyer-wallet": walletAddress,
